@@ -623,14 +623,14 @@ article.addEventListener('click', async (event) => {
     return
   }
 
+  if (event.target.closest('a, button, input, label, summary')) {
+    return
+  }
+
   const image = event.target.closest('img')
   if (image) {
     lightbox.querySelector('img').src = image.src
     lightbox.showModal()
-    return
-  }
-
-  if (event.target.closest('a, button, input, label, summary')) {
     return
   }
 

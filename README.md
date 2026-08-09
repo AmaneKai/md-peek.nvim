@@ -38,6 +38,8 @@ Browser-extension-only concerns such as remote-origin permissions, response `Con
 
 `browser = "auto"` prefers Chromium's chromeless app mode and falls back to Firefox. Firefox supports every rendering and synchronization feature, but Firefox does not expose a Chromium-style `--app` mode, so its dedicated preview retains normal browser chrome. Run `:checkhealth md-peek` to inspect the setup.
 
+Each preview uses a temporary, isolated browser profile and an attached Neovim job. Closing the preview or exiting Neovim therefore stops only the browser instance owned by md-peek; it does not close the user's normal browser session.
+
 ## Installation
 
 With lazy.nvim:
@@ -217,6 +219,8 @@ make testlua     # headless Neovim smoke test
 make testserver  # server integration tests
 make test        # both test suites
 ```
+
+CI runs the Lua launch and cleanup smoke tests on Ubuntu, macOS, and Windows. The server and browser-client suite runs on Ubuntu.
 
 ## License
 

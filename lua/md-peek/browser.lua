@@ -1,10 +1,27 @@
 local M = {}
+local browser_process = require("md-peek.browser_process")
 
 local MAC_CHROMIUM = {
-  { name = "Google Chrome", path = "/Applications/Google Chrome.app" },
-  { name = "Brave Browser", path = "/Applications/Brave Browser.app" },
-  { name = "Microsoft Edge", path = "/Applications/Microsoft Edge.app" },
-  { name = "Chromium", path = "/Applications/Chromium.app" },
+  {
+    name = "Google Chrome",
+    path = "/Applications/Google Chrome.app",
+    binary = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  },
+  {
+    name = "Brave Browser",
+    path = "/Applications/Brave Browser.app",
+    binary = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  },
+  {
+    name = "Microsoft Edge",
+    path = "/Applications/Microsoft Edge.app",
+    binary = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  },
+  {
+    name = "Chromium",
+    path = "/Applications/Chromium.app",
+    binary = "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  },
 }
 local MAC_FIREFOX = {
   {
@@ -101,6 +118,9 @@ end
 local function resize_firefox(found, tag, window, position)
   if found.os == "mac" then
     vim.defer_fn(function()
+      if not browser_process.is_active(tag) then
+        return
+      end
       local script = string.format(
         'tell application "%s" to repeat with w in every window\ntry\nif (name of w) contains "%s" then set bounds of w to {%d, %d, %d, %d}\nend try\nend repeat',
         found.name,
@@ -110,30 +130,64 @@ local function resize_firefox(found, tag, window, position)
         position.x + window.width,
         position.y + window.height
       )
-      vim.fn.jobstart({ "osascript", "-e", script }, { detach = true })
+      vim.fn.jobstart({ "osascript", "-e", script }, { detach = false })
     end, 1200)
   elseif found.os == "linux" and vim.fn.executable("xdotool") == 1 then
-    vim.fn.jobstart({
-      "xdotool",
-      "search",
-      "--sync",
-      "--name",
-      tag,
-      "windowsize",
-      "%@",
-      tostring(window.width),
-      tostring(window.height),
-      "windowmove",
-      "%@",
-      tostring(position.x),
-      tostring(position.y),
-    }, { detach = true })
+    vim.defer_fn(function()
+      if not browser_process.is_active(tag) then
+        return
+      end
+      vim.fn.jobstart({
+        "xdotool",
+        "search",
+        "--name",
+        tag,
+        "windowsize",
+        "%@",
+        tostring(window.width),
+        tostring(window.height),
+        "windowmove",
+        "%@",
+        tostring(position.x),
+        tostring(position.y),
+      }, { detach = false })
+    end, 1200)
   elseif found.os == "linux" and vim.fn.executable("wmctrl") == 1 then
     vim.defer_fn(function()
+      if not browser_process.is_active(tag) then
+        return
+      end
       local geometry =
         string.format("0,%d,%d,%d,%d", position.x, position.y, window.width, window.height)
-      vim.fn.jobstart({ "wmctrl", "-r", tag, "-e", geometry }, { detach = true })
+      vim.fn.jobstart({ "wmctrl", "-r", tag, "-e", geometry }, { detach = false })
     end, 1200)
+  end
+end
+
+local function launch_owned_browser(found, url, window, position)
+  local profile_directory = vim.fn.tempname() .. "-md-peek"
+  if vim.fn.mkdir(profile_directory, "p") == 0 then
+    vim.notify("[md-peek] could not create a temporary browser profile", vim.log.levels.ERROR)
+    return
+  end
+
+  local port = url:match(":(%d+)/")
+  local tag = port and ("md-peek:" .. port) or url
+  local command = browser_process.command(
+    found.binary or found.path,
+    found.kind,
+    url,
+    profile_directory,
+    window,
+    position
+  )
+  if not browser_process.start(command, tag, profile_directory) then
+    vim.notify("[md-peek] failed to launch the browser preview", vim.log.levels.ERROR)
+    return
+  end
+
+  if found.kind == "firefox" then
+    resize_firefox(found, tag, window, position)
   end
 end
 
@@ -148,29 +202,66 @@ function M.open(url, window, position, preference)
     return
   end
 
-  if found.kind == "firefox" then
-    local executable = found.binary or found.path
-    vim.fn.jobstart({ executable, "--new-window", url }, { detach = true })
-    local port = url:match(":(%d+)/")
-    if port then
-      resize_firefox(found, "md-peek:" .. port, window, position)
+  launch_owned_browser(found, url, window, position)
+end
+
+local function run_close_command(command, wait_for_completion)
+  if wait_for_completion then
+    return vim.system(command, { text = true }):wait(2000)
+  end
+  vim.fn.jobstart(command, { detach = true })
+end
+
+local function close_wmctrl_windows(tag, wait_for_completion)
+  local function close_matches(output)
+    for line in (output or ""):gmatch("[^\n]+") do
+      if line:find(tag, 1, true) then
+        local id = line:match("^(%S+)")
+        if id then
+          run_close_command({ "wmctrl", "-ic", id }, wait_for_completion)
+        end
+      end
+    end
+  end
+
+  if wait_for_completion then
+    local result = vim.system({ "wmctrl", "-l" }, { text = true }):wait(2000)
+    if result.code == 0 then
+      close_matches(result.stdout)
     end
     return
   end
 
-  local args = {
-    "--app=" .. url,
-    string.format("--window-size=%d,%d", window.width, window.height),
-    string.format("--window-position=%d,%d", position.x, position.y),
-  }
-  if found.os == "mac" then
-    vim.fn.jobstart({ "open", "-na", found.name, "--args", unpack(args) }, { detach = true })
-  else
-    vim.fn.jobstart({ found.binary or found.path, unpack(args) }, { detach = true })
-  end
+  vim.system({ "wmctrl", "-l" }, { text = true }, function(result)
+    if result.code == 0 then
+      close_matches(result.stdout)
+    end
+  end)
 end
 
-function M.close(tag, preference)
+local function close_windows_preview(tag, wait_for_completion)
+  local escaped_tag = tag:gsub("'", "''")
+  local script = string.format(
+    "$title = '%s'; Get-Process | Where-Object { $_.MainWindowTitle -like ('*' + $title + '*') } | ForEach-Object { [void]$_.CloseMainWindow() }",
+    escaped_tag
+  )
+  run_close_command({
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  }, wait_for_completion)
+end
+
+function M.close(tag, preference, options)
+  options = options or {}
+  local wait_for_completion = options.wait_for_completion == true
+  if browser_process.stop(tag, wait_for_completion) then
+    return
+  end
+
   local found = M.find(preference)
   if not found then
     return
@@ -181,23 +272,13 @@ function M.close(tag, preference)
       found.name,
       tag
     )
-    vim.fn.jobstart({ "osascript", "-e", script }, { detach = true })
+    run_close_command({ "osascript", "-e", script }, wait_for_completion)
   elseif found.os == "linux" and vim.fn.executable("xdotool") == 1 then
-    vim.fn.jobstart({ "xdotool", "search", "--name", tag, "windowclose" }, { detach = true })
+    run_close_command({ "xdotool", "search", "--name", tag, "windowclose" }, wait_for_completion)
   elseif found.os == "linux" and vim.fn.executable("wmctrl") == 1 then
-    vim.system({ "wmctrl", "-l" }, { text = true }, function(result)
-      if result.code ~= 0 then
-        return
-      end
-      for line in (result.stdout or ""):gmatch("[^\n]+") do
-        if line:find(tag, 1, true) then
-          local id = line:match("^(%S+)")
-          if id then
-            vim.fn.jobstart({ "wmctrl", "-ic", id }, { detach = true })
-          end
-        end
-      end
-    end)
+    close_wmctrl_windows(tag, wait_for_completion)
+  elseif found.os == "win32" then
+    close_windows_preview(tag, wait_for_completion)
   end
 end
 

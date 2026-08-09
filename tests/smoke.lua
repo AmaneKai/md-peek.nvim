@@ -1,8 +1,55 @@
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h")
 vim.opt.runtimepath:append(root)
 
+local browser_process = require("md-peek.browser_process")
+local preview_url = "http://127.0.0.1:4321/?token=test"
+local profile_directory = vim.fn.tempname() .. "-md-peek-test"
+local chromium_command = browser_process.command(
+  "chromium",
+  "chromium",
+  preview_url,
+  profile_directory,
+  { width = 1100, height = 1000 },
+  { x = 40, y = 50 }
+)
+assert(chromium_command[2] == "--app=" .. preview_url)
+assert(chromium_command[3] == "--window-size=1100,1000")
+assert(chromium_command[4] == "--window-position=40,50")
+assert(chromium_command[5] == "--user-data-dir=" .. profile_directory)
+
+local firefox_command = browser_process.command(
+  "firefox",
+  "firefox",
+  preview_url,
+  profile_directory,
+  { width = 1100, height = 1000 },
+  { x = 40, y = 50 }
+)
+assert(firefox_command[2] == "--new-instance")
+assert(firefox_command[3] == "--profile")
+assert(firefox_command[4] == profile_directory)
+assert(firefox_command[5] == "--window-size" and firefox_command[6] == "1100,1000")
+assert(firefox_command[7] == "--new-window" and firefox_command[8] == preview_url)
+
+assert(vim.fn.mkdir(profile_directory, "p") == 1)
+local lifecycle_tag = "md-peek:lifecycle-test"
+assert(browser_process.start({
+  vim.v.progpath,
+  "--headless",
+  "--clean",
+  "-i",
+  "NONE",
+  "-c",
+  "sleep 10",
+}, lifecycle_tag, profile_directory))
+assert(browser_process.is_active(lifecycle_tag))
+assert(not browser_process.stop("md-peek:another-preview", true))
+assert(browser_process.stop(lifecycle_tag, true))
+assert(not browser_process.is_active(lifecycle_tag))
+assert(vim.fn.isdirectory(profile_directory) == 0)
+
 local started = 0
-package.loaded["md-peek.server"] = {
+local mock_server = {
   ready = false,
   start = function()
     started = started + 1
@@ -10,14 +57,18 @@ package.loaded["md-peek.server"] = {
   end,
   stop = function() end,
 }
+package.loaded["md-peek.server"] = mock_server
 package.loaded["md-peek.client"] = {
   request = function() end,
   debounced_request = function() end,
   cancel_debounced = function() end,
 }
+local browser_close_options
 package.loaded["md-peek.browser"] = {
   open = function() end,
-  close = function() end,
+  close = function(_, _, options)
+    browser_close_options = options
+  end,
   find = function()
     return nil
   end,
@@ -73,5 +124,13 @@ overlay.close_all()
 peek.open()
 assert(started == 1)
 peek.close()
+
+mock_server.port = 4321
+peek.close()
+assert(browser_close_options.wait_for_completion == false)
+
+mock_server.port = 4321
+peek.shutdown()
+assert(browser_close_options.wait_for_completion == true)
 
 print("md-peek Lua smoke tests passed")

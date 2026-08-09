@@ -332,16 +332,28 @@ function M.open()
   await_ready()
 end
 
-function M.close()
+local function close_preview(wait_for_browser)
   generation = generation + 1
   client.cancel_debounced()
   stop_events()
   overlay.close_all()
   if server.port then
-    browser.close("md-peek:" .. server.port, M.config.browser)
+    browser.close(
+      "md-peek:" .. server.port,
+      M.config.browser,
+      { wait_for_completion = wait_for_browser }
+    )
   end
   server.stop()
   active_bufnr = nil
+end
+
+function M.close()
+  close_preview(false)
+end
+
+function M.shutdown()
+  close_preview(true)
 end
 
 function M.toggle()
@@ -414,7 +426,7 @@ function M.setup(opts)
   end
 end
 
-vim.api.nvim_create_autocmd("VimLeavePre", { group = aug, callback = M.close })
+vim.api.nvim_create_autocmd("VimLeavePre", { group = aug, callback = M.shutdown })
 
 vim.api.nvim_create_user_command("MdPeekOpen", M.open, {})
 vim.api.nvim_create_user_command("MdPeekClose", M.close, {})

@@ -430,6 +430,16 @@ button {
   border-radius: 6px;
   cursor: zoom-in;
 }
+.markdown-body a > img {
+  cursor: pointer;
+}
+.markdown-body img[src*='badge' i],
+.markdown-body img[src*='shields.io' i] {
+  display: inline-block;
+  margin: 0.2em 0.15em;
+  border-radius: 3px;
+  vertical-align: middle;
+}
 .markdown-body blockquote {
   margin-left: 0;
   padding: 0.7em 1.25em;
