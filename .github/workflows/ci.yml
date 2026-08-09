@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lua:
+    name: Lua and Neovim
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Neovim
+        uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
+        with:
+          neovim: true
+          version: stable
+      - name: Check Lua formatting
+        uses: JohnnyMorganz/stylua-action@76fd70c03e6340ceaf673366712db9b20560b402 # v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 2.5.2
+          args: --check lua tests
+      - name: Run Lua smoke tests
+        run: make testlua
+
+  server:
+    name: Server and browser client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - name: Install quality-tool dependencies
+        run: npm ci
+      - name: Install server dependencies
+        run: npm ci --prefix server
+      - name: Check formatting
+        run: npm run format:check
+      - name: Lint JavaScript and TypeScript
+        run: npm run lint
+      - name: Check TypeScript
+        run: npm --prefix server run check
+      - name: Run server tests
+        run: npm --prefix server test
+      # server/dist is committed and loaded directly by the plugin. Fail when
+      # source changes were not accompanied by regenerated build artifacts.
+      - name: Verify committed build artifacts
+        run: make checkbuild

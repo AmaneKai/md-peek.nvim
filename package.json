@@ -1,0 +1,21 @@
+{
+  "name": "md-peek-nvim-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "^22.18.0 || >=24.2.0"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint server/src server/build.mjs"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-unicorn": "^64.0.0",
+    "prettier": "^3.6.2",
+    "typescript-eslint": "^8.60.0"
+  }
+}

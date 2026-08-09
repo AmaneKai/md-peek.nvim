@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="md-peek-token" content="__MD_PEEK_TOKEN__" />
+    <title>md-peek</title>
+    <link rel="stylesheet" href="/katex.min.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="progress"></div>
+    <header id="toolbar">
+      <button
+        id="toc-toggle"
+        title="Toggle table of contents"
+        aria-label="Toggle table of contents"
+        aria-expanded="false"
+      >
+        ☰
+      </button>
+      <div id="title-wrap">
+        <strong id="document-title">Markdown</strong><span id="status">Connecting…</span>
+      </div>
+      <div class="toolbar-actions">
+        <button id="raw-toggle" title="Toggle rendered/source view">&lt;/&gt;</button>
+        <button id="theme-toggle" title="Toggle light/dark theme">◐</button>
+        <button id="export" title="Download rendered HTML">↓ HTML</button>
+        <button id="print" title="Print or save as PDF">Print</button>
+      </div>
+    </header>
+    <aside id="toc">
+      <div id="toc-heading">On this page</div>
+      <div id="toc-content"></div>
+    </aside>
+    <div
+      id="toc-resizer"
+      title="Drag to resize sidebar · Double-click to reset"
+      aria-hidden="true"
+    ></div>
+    <main id="viewport">
+      <article id="document" class="markdown-body"></article>
+      <pre id="source" hidden><code></code></pre>
+      <div id="empty" hidden>Start writing Markdown in Neovim.</div>
+    </main>
+    <dialog id="lightbox">
+      <button aria-label="Close">×</button><img alt="Expanded preview" />
+    </dialog>
+    <div id="toast" role="status"></div>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>
