@@ -49,6 +49,10 @@ function M.start(opts)
           M.port = tonumber(url:match(":(%d+)/?$"))
           M.ready = M.port ~= nil
         end
+        local event = line:match("^MD_PEEK_EVENT=(.+)$")
+        if event and opts.on_event then
+          opts.on_event(event)
+        end
       end
     end,
     on_stderr = function(_, data)
@@ -83,6 +87,17 @@ function M.start(opts)
   end
   job_id = started
   return true
+end
+
+function M.send(message)
+  if not job_id or not M.ready then
+    return false
+  end
+  local ok, payload = pcall(vim.json.encode, message)
+  if not ok then
+    return false
+  end
+  return vim.fn.chansend(job_id, payload .. "\n") > 0
 end
 
 function M.stop()

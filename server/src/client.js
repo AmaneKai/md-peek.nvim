@@ -1,11 +1,10 @@
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
-import renderMathInElement from 'katex/contrib/auto-render'
 import MarkdownIt from 'markdown-it'
 import { full as emoji } from 'markdown-it-emoji'
 import footnote from 'markdown-it-footnote'
 import taskLists from 'markdown-it-task-lists'
-import mermaid from 'mermaid'
+import { LatestTaskQueue, LruCache } from './render-work.js'
 
 const token = document.querySelector('meta[name="md-peek-token"]')?.content || ''
 
@@ -61,6 +60,7 @@ const defaults = {
 
 let config = { ...defaults }
 let currentDocument = { content: '', path: '', line: 1 }
+let latestDocument = currentDocument
 let currentSocket
 let reconnectDelay = 250
 let rawVisible = false
@@ -69,6 +69,10 @@ let sourceNodes = []
 let activeNode
 let tocEntries = []
 let rendering = false
+let latestCursorLine = 1
+let mathRendererPromise
+let mermaidPromise
+const highlightedCode = new LruCache(128)
 
 function toast(message) {
   toastElement.textContent = message
@@ -140,17 +144,26 @@ function escapeHtml(value) {
 }
 
 function highlightCode(content, language) {
+  const cacheKey = `${language}\0${content}`
+  const cached = highlightedCode.get(cacheKey)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  let highlighted
   try {
     if (language && hljs.getLanguage(language)) {
-      return hljs.highlight(content, { language }).value
+      highlighted = hljs.highlight(content, { language }).value
+    } else {
+      highlighted = hljs.highlightAuto(content).value
     }
-
-    return hljs.highlightAuto(content).value
   } catch (error) {
     console.warn('[md-peek] syntax highlighting failed; using plain text', error)
-
-    return escapeHtml(content)
+    highlighted = escapeHtml(content)
   }
+
+  highlightedCode.set(cacheKey, highlighted)
+  return highlighted
 }
 
 function codeBlockHtml({ line, language = '', highlighted, copyButton }) {
@@ -481,12 +494,18 @@ function revealLine(line, shouldScroll = true) {
   }
 }
 
-function renderMath() {
-  if (!config.math) {
+function mightContainMath(markdown) {
+  return markdown.includes('$') || markdown.includes('\\(') || markdown.includes('\\[')
+}
+
+async function renderMath(markdown) {
+  if (!config.math || !mightContainMath(markdown)) {
     return
   }
 
   try {
+    mathRendererPromise ||= import('katex/contrib/auto-render').then((module) => module.default)
+    const renderMathInElement = await mathRendererPromise
     renderMathInElement(article, {
       delimiters: [
         { left: '$$', right: '$$', display: true },
@@ -507,6 +526,8 @@ async function renderMermaidDiagrams() {
     return
   }
 
+  mermaidPromise ||= import('mermaid').then((module) => module.default)
+  const mermaid = await mermaidPromise
   if (!mermaidInitialized) {
     mermaid.initialize({
       startOnLoad: false,
@@ -526,7 +547,7 @@ async function renderMermaidDiagrams() {
 
 async function updateRenderedDocument(documentState) {
   const previousScrollPosition = window.scrollY
-  currentDocument = documentState
+  currentDocument = { ...documentState, line: latestCursorLine }
   sourceCode.textContent = documentState.content
   documentTitle.textContent = documentState.path.split(/[\\/]/).pop() || 'Markdown'
   document.title = `md-peek:${location.port} ${documentTitle.textContent}`
@@ -538,13 +559,13 @@ async function updateRenderedDocument(documentState) {
   }
 
   article.innerHTML = html
-  emptyState.hidden = documentState.content.trim() !== ''
-  article.hidden = documentState.content.trim() === '' || rawVisible
+  const documentIsEmpty = documentState.content.trim() === ''
+  emptyState.hidden = !documentIsEmpty
+  article.hidden = documentIsEmpty || rawVisible
   source.hidden = !rawVisible
   decorateContent()
 
-  renderMath()
-  await renderMermaidDiagrams()
+  await Promise.all([renderMath(documentState.content), renderMermaidDiagrams()])
 
   buildToc()
   sourceLineNodes()
@@ -552,17 +573,26 @@ async function updateRenderedDocument(documentState) {
     window.scrollTo({ top: previousScrollPosition })
   }
 
-  revealLine(documentState.line, !config.preserve_scroll || previousScrollPosition === 0)
+  revealLine(latestCursorLine, !config.preserve_scroll || previousScrollPosition === 0)
 }
 
 async function renderDocument(documentState) {
-  rendering = true
-  try {
-    await updateRenderedDocument(documentState)
-  } finally {
-    rendering = false
-  }
+  latestCursorLine = documentState.line
+  latestDocument = { ...documentState }
+  return renderQueue.enqueue(latestDocument)
 }
+
+const renderQueue = new LatestTaskQueue(
+  async (documentState) => {
+    rendering = true
+    try {
+      await updateRenderedDocument(documentState)
+    } finally {
+      rendering = false
+    }
+  },
+  () => new Promise((resolve) => setTimeout(resolve, 0)),
+)
 
 function send(message) {
   if (currentSocket?.readyState === WebSocket.OPEN) {
@@ -591,6 +621,9 @@ function connect() {
       } else if (message.type === 'render') {
         await renderDocument(message.document)
       } else if (message.type === 'cursor') {
+        latestCursorLine = message.line
+        latestDocument.line = message.line
+        currentDocument.line = message.line
         revealLine(message.line)
       } else if (message.type === 'error') {
         console.error('[md-peek] preview server rejected a browser message', message.error)
@@ -705,7 +738,7 @@ document.getElementById('theme-toggle').addEventListener('click', async () => {
     localStorage.setItem('md-peek:scheme-override-v2', next)
   }
   mermaidInitialized = false
-  await renderDocument(currentDocument)
+  await renderDocument(latestDocument)
 })
 document.getElementById('print').addEventListener('click', () => window.print())
 document.getElementById('export').addEventListener('click', () => {

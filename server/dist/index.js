@@ -9,6 +9,7 @@ import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { basename, dirname as dirname2, extname, resolve as resolve2 } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -14567,6 +14568,16 @@ var browserMessageSchema = external_exports.discriminatedUnion("type", [
     href: external_exports.string().min(1)
   })
 ]);
+var editorMessageSchema = external_exports.discriminatedUnion("type", [
+  external_exports.object({
+    type: external_exports.literal("render"),
+    document: previewDocumentSchema
+  }),
+  external_exports.object({
+    type: external_exports.literal("cursor"),
+    line: positiveLineNumber
+  })
+]);
 function normalizeEmptyLuaTable(value) {
   return Array.isArray(value) && value.length === 0 ? {} : value;
 }
@@ -14608,6 +14619,9 @@ function parseCursorLine(value) {
 }
 function parseBrowserMessage(value) {
   return browserMessageSchema.parse(value);
+}
+function parseEditorMessage(value) {
+  return editorMessageSchema.parse(value);
 }
 function parsePreviewConfig(serializedConfig) {
   return previewConfigSchema.parse(JSON.parse(serializedConfig || "{}"));
@@ -14704,11 +14718,12 @@ function streamFile(response, path, headers) {
 function errorMessage(error51) {
   return error51 instanceof Error ? error51.message : String(error51);
 }
-function createServer() {
+function createServer(options = {}) {
   let currentDocument = { ...initialDocument };
   const previewConfig = loadPreviewConfig();
   const browserSockets = /* @__PURE__ */ new Set();
   const editorSubscribers = /* @__PURE__ */ new Set();
+  let editorLines;
   function broadcastToBrowsers(message) {
     const payload = JSON.stringify(message);
     for (const browserSocket of browserSockets) {
@@ -14718,11 +14733,35 @@ function createServer() {
     }
   }
   function emitToEditors(message) {
+    options.onEditorEvent?.(message);
     const payload = `${JSON.stringify(message)}
 `;
     for (const editorSubscriber of editorSubscribers) {
       editorSubscriber.write(payload);
     }
+  }
+  function applyEditorMessage(value) {
+    const message = parseEditorMessage(value);
+    if (message.type === "render") {
+      currentDocument = message.document;
+      broadcastToBrowsers({ type: "render", document: currentDocument });
+      return;
+    }
+    currentDocument.line = message.line;
+    broadcastToBrowsers({ type: "cursor", line: currentDocument.line });
+  }
+  if (options.editorInput) {
+    editorLines = createInterface({ input: options.editorInput });
+    editorLines.on("line", (line) => {
+      if (line === "") {
+        return;
+      }
+      try {
+        applyEditorMessage(JSON.parse(line));
+      } catch (error51) {
+        emitToEditors({ type: "error", error: errorMessage(error51) });
+      }
+    });
   }
   async function handleDocumentUpdate(request, response, pathname) {
     try {
@@ -14765,6 +14804,13 @@ function createServer() {
       return streamFile(response, path, {
         "content-type": contentTypes[extname(path)] || "application/octet-stream",
         "cache-control": "no-cache"
+      });
+    }
+    if (request.method === "GET" && /^\/chunks\/[\w.-]+\.js$/.test(url2.pathname)) {
+      const path = resolve2(distributionDirectory, url2.pathname.slice(1));
+      return streamFile(response, path, {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable"
       });
     }
     if (request.method === "GET" && url2.pathname.startsWith("/fonts/")) {
@@ -14860,6 +14906,7 @@ function createServer() {
     browserSocket.on("close", () => browserSockets.delete(browserSocket));
   });
   server.on("close", () => {
+    editorLines?.close();
     for (const browserSocket of browserSockets) {
       browserSocket.close();
     }
@@ -14871,7 +14918,13 @@ function createServer() {
   return server;
 }
 if (import.meta.main) {
-  const server = createServer();
+  const server = createServer({
+    editorInput: process.stdin,
+    onEditorEvent(message) {
+      process.stdout.write(`MD_PEEK_EVENT=${JSON.stringify(message)}
+`);
+    }
+  });
   server.listen(Number(process.env.MD_PEEK_PORT || 0), "127.0.0.1", () => {
     const address = server.address();
     if (address && typeof address !== "string") {

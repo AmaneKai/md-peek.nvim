@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseBrowserMessage,
   parseCursorLine,
+  parseEditorMessage,
   parsePreviewConfig,
   parsePreviewDocument,
 } from './protocol.js'
@@ -26,6 +27,20 @@ describe('preview protocol', () => {
     expect(parseBrowserMessage({ type: 'jump', line: '7' })).toEqual({ type: 'jump', line: 7 })
     expect(() => parseBrowserMessage({ type: 'open_file', href: '' })).toThrow()
     expect(() => parseBrowserMessage({ type: 'unknown' })).toThrow()
+  })
+
+  it('validates messages from the persistent editor channel', () => {
+    expect(
+      parseEditorMessage({
+        type: 'render',
+        document: { content: '# Hello', path: '/tmp/readme.md', line: 3 },
+      }),
+    ).toMatchObject({ type: 'render', document: { line: 3 } })
+    expect(parseEditorMessage({ type: 'cursor', line: '9' })).toEqual({
+      type: 'cursor',
+      line: 9,
+    })
+    expect(() => parseEditorMessage({ type: 'render', document: null })).toThrow()
   })
 
   it('validates preview configuration at the environment boundary', () => {

@@ -16,10 +16,13 @@ await esbuild.build({
 await esbuild.build({
   entryPoints: ['src/client.js'],
   bundle: true,
+  splitting: true,
   platform: 'browser',
   format: 'esm',
   minify: true,
-  outfile: 'dist/client.js',
+  outdir: 'dist',
+  entryNames: '[name]',
+  chunkNames: 'chunks/[name]-[hash]',
 })
 
 for (const file of ['index.html', 'style.css']) {

@@ -2,12 +2,15 @@ import http from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { createReadStream, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, extname, resolve } from 'node:path'
+import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { AssetOutsideDocumentDirectoryError, resolveDocumentAssetPath } from './asset-path.js'
 import {
   parseBrowserMessage,
   parseCursorLine,
+  parseEditorMessage,
   parsePreviewConfig,
   parsePreviewDocument,
   type PreviewDocument,
@@ -45,6 +48,11 @@ const contentTypes: Record<string, string> = {
   '.avif': 'image/avif',
   '.ico': 'image/x-icon',
   '.pdf': 'application/pdf',
+}
+
+export interface PreviewServerOptions {
+  editorInput?: Readable
+  onEditorEvent?: (message: unknown) => void
 }
 
 function loadPreviewConfig(): Record<string, unknown> {
@@ -129,11 +137,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function createServer() {
+export function createServer(options: PreviewServerOptions = {}) {
   let currentDocument = { ...initialDocument }
   const previewConfig = loadPreviewConfig()
   const browserSockets = new Set<WebSocket>()
   const editorSubscribers = new Set<http.ServerResponse>()
+  let editorLines: ReadlineInterface | undefined
 
   function broadcastToBrowsers(message: unknown): void {
     const payload = JSON.stringify(message)
@@ -145,10 +154,37 @@ export function createServer() {
   }
 
   function emitToEditors(message: unknown): void {
+    options.onEditorEvent?.(message)
     const payload = `${JSON.stringify(message)}\n`
     for (const editorSubscriber of editorSubscribers) {
       editorSubscriber.write(payload)
     }
+  }
+
+  function applyEditorMessage(value: unknown): void {
+    const message = parseEditorMessage(value)
+    if (message.type === 'render') {
+      currentDocument = message.document
+      broadcastToBrowsers({ type: 'render', document: currentDocument })
+      return
+    }
+
+    currentDocument.line = message.line
+    broadcastToBrowsers({ type: 'cursor', line: currentDocument.line })
+  }
+
+  if (options.editorInput) {
+    editorLines = createInterface({ input: options.editorInput })
+    editorLines.on('line', (line) => {
+      if (line === '') {
+        return
+      }
+      try {
+        applyEditorMessage(JSON.parse(line))
+      } catch (error) {
+        emitToEditors({ type: 'error', error: errorMessage(error) })
+      }
+    })
   }
 
   async function handleDocumentUpdate(
@@ -200,6 +236,14 @@ export function createServer() {
       return streamFile(response, path, {
         'content-type': contentTypes[extname(path)] || 'application/octet-stream',
         'cache-control': 'no-cache',
+      })
+    }
+
+    if (request.method === 'GET' && /^\/chunks\/[\w.-]+\.js$/.test(url.pathname)) {
+      const path = resolve(distributionDirectory, url.pathname.slice(1))
+      return streamFile(response, path, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'public, max-age=31536000, immutable',
       })
     }
 
@@ -313,6 +357,7 @@ export function createServer() {
   })
 
   server.on('close', () => {
+    editorLines?.close()
     for (const browserSocket of browserSockets) {
       browserSocket.close()
     }
@@ -326,7 +371,12 @@ export function createServer() {
 }
 
 if (import.meta.main) {
-  const server = createServer()
+  const server = createServer({
+    editorInput: process.stdin,
+    onEditorEvent(message) {
+      process.stdout.write(`MD_PEEK_EVENT=${JSON.stringify(message)}\n`)
+    },
+  })
   server.listen(Number(process.env.MD_PEEK_PORT || 0), '127.0.0.1', () => {
     const address = server.address()
     if (address && typeof address !== 'string') {

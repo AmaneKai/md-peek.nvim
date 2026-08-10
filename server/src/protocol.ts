@@ -23,6 +23,17 @@ const browserMessageSchema = z.discriminatedUnion('type', [
   }),
 ])
 
+const editorMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('render'),
+    document: previewDocumentSchema,
+  }),
+  z.object({
+    type: z.literal('cursor'),
+    line: positiveLineNumber,
+  }),
+])
+
 function normalizeEmptyLuaTable(value: unknown): unknown {
   return Array.isArray(value) && value.length === 0 ? {} : value
 }
@@ -64,6 +75,7 @@ const previewConfigSchema = z
 
 export type PreviewDocument = z.infer<typeof previewDocumentSchema>
 export type BrowserMessage = z.infer<typeof browserMessageSchema>
+export type EditorMessage = z.infer<typeof editorMessageSchema>
 
 export function parsePreviewDocument(value: unknown): PreviewDocument {
   return previewDocumentSchema.parse(value)
@@ -75,6 +87,10 @@ export function parseCursorLine(value: unknown): number {
 
 export function parseBrowserMessage(value: unknown): BrowserMessage {
   return browserMessageSchema.parse(value)
+}
+
+export function parseEditorMessage(value: unknown): EditorMessage {
+  return editorMessageSchema.parse(value)
 }
 
 export function parsePreviewConfig(serializedConfig: string | undefined): Record<string, unknown> {

@@ -11,7 +11,7 @@ function M.check()
   else
     vim.health.error("Neovim 0.10 or newer is required")
   end
-  for _, name in ipairs({ "node", "curl" }) do
+  for _, name in ipairs({ "node" }) do
     if executable(name) then
       vim.health.ok(name .. " found")
     else

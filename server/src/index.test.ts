@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { WebSocket } from 'ws'
-import { createServer, type PreviewDocument } from './index.js'
+import { createServer, type PreviewDocument, type PreviewServerOptions } from './index.js'
 
 interface InitialPreviewMessage {
   type: 'init'
@@ -24,8 +25,8 @@ afterEach(async () => {
   }
 })
 
-async function start() {
-  const server = createServer()
+async function start(options: PreviewServerOptions = {}) {
+  const server = createServer(options)
   live = server
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -56,6 +57,50 @@ describe('preview server', () => {
     })
     expect(message.type).toBe('init')
     expect(message.document).toEqual(document)
+  })
+
+  it('uses persistent editor input and output for bidirectional updates', async () => {
+    const editorInput = new PassThrough()
+    let receiveEditorEvent: ((message: unknown) => void) | undefined
+    const editorEvent = new Promise<unknown>((resolve) => {
+      receiveEditorEvent = resolve
+    })
+    const url = await start({
+      editorInput,
+      onEditorEvent(message) {
+        receiveEditorEvent?.(message)
+      },
+    })
+    const socket = new WebSocket(url.replace('http', 'ws') + '/ws')
+    await new Promise<void>((resolve, reject) => {
+      socket.once('message', () => resolve())
+      socket.once('error', reject)
+    })
+
+    const document = { content: '# From stdin', path: '/tmp/stdin.md', line: 4 }
+    const browserUpdate = new Promise<Record<string, unknown>>((resolve, reject) => {
+      socket.once('message', (value) => resolve(JSON.parse(value.toString())))
+      socket.once('error', reject)
+    })
+    editorInput.write(`${JSON.stringify({ type: 'render', document })}\n`)
+    await expect(browserUpdate).resolves.toEqual({ type: 'render', document })
+
+    socket.send(JSON.stringify({ type: 'jump', line: 8 }))
+    await expect(editorEvent).resolves.toEqual({ type: 'jump', line: 8 })
+    socket.close()
+    editorInput.destroy()
+  })
+
+  it('reports malformed persistent editor messages', async () => {
+    const editorInput = new PassThrough()
+    const editorEvent = new Promise<unknown>((resolve) => {
+      void start({ editorInput, onEditorEvent: resolve })
+    })
+
+    editorInput.write('{not-json}\n')
+
+    await expect(editorEvent).resolves.toMatchObject({ type: 'error' })
+    editorInput.destroy()
   })
 
   it('rejects non-loopback Host headers', async () => {

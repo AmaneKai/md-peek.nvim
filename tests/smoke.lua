@@ -59,8 +59,8 @@ local mock_server = {
 }
 package.loaded["md-peek.server"] = mock_server
 package.loaded["md-peek.client"] = {
-  request = function() end,
-  debounced_request = function() end,
+  send = function() end,
+  debounce = function() end,
   cancel_debounced = function() end,
 }
 local browser_close_options

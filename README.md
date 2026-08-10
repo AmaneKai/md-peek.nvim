@@ -33,7 +33,6 @@ Browser-extension-only concerns such as remote-origin permissions, response `Con
 
 - Neovim 0.10+
 - Node.js 22.18+ (or 24.2+)
-- `curl`
 - Chrome, Brave, Edge, Chromium, or Firefox
 
 `browser = "auto"` prefers Chromium's chromeless app mode and falls back to Firefox. Firefox supports every rendering and synchronization feature, but Firefox does not expose a Chromium-style `--app` mode, so its dedicated preview retains normal browser chrome. Run `:checkhealth md-peek` to inspect the setup.
@@ -205,11 +204,11 @@ GitHub-style alerts:
 
 ## How it works
 
-Opening a preview starts one Node process bound to `127.0.0.1` on an operating-system-assigned port. Neovim sends buffer snapshots and cursor positions over authenticated HTTP. The browser receives updates over a WebSocket, while browser clicks return to Neovim over a long-lived event stream.
+Opening a preview starts one Node process bound to `127.0.0.1` on an operating-system-assigned port. Neovim and that attached child process exchange newline-delimited JSON through persistent standard input and output streams, so live updates do not start per-edit processes or make local HTTP requests. The browser receives updates over a WebSocket, and browser clicks return through the same Node job channel.
 
 The session token is freshly generated for each preview and required by every stateful route. Raw HTML is sanitized by default, and the page uses a restrictive Content Security Policy. Relative local assets are served only through the token-authenticated preview session. Asset paths are confined to the Markdown document's real directory; parent traversal and symlinks that resolve outside that directory are rejected.
 
-The browser renderer and its math fonts are committed in `server/dist/`; runtime rendering never fetches libraries from a CDN.
+The browser renderer and its math fonts are committed in `server/dist/`; runtime rendering never fetches libraries from a CDN. Optional KaTeX and Mermaid code is loaded from local chunks only when the active document needs it.
 
 ## Development
 

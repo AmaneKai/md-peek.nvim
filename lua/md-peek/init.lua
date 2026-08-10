@@ -60,8 +60,6 @@ M.config = {
 
 local active_bufnr
 local generation = 0
-local events_job
-local events_running = false
 local aug = vim.api.nvim_create_augroup("MdPeek", { clear = true })
 
 local function is_markdown(bufnr)
@@ -73,46 +71,33 @@ end
 local function document(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local path = vim.api.nvim_buf_get_name(bufnr)
+  local win = vim.fn.bufwinid(bufnr)
   if path == "" then
     path = vim.fs.joinpath(vim.fn.getcwd(), "untitled.md")
   end
   return {
     content = table.concat(lines, "\n"),
     path = vim.fn.fnamemodify(path, ":p"),
-    line = vim.api.nvim_win_get_cursor(0)[1],
+    line = win ~= -1 and vim.api.nvim_win_get_cursor(win)[1] or 1,
   }
-end
-
-local function report_error(action, decoded)
-  if decoded and decoded.ok == false then
-    vim.notify(
-      "[md-peek] " .. action .. " failed: " .. tostring(decoded.error),
-      vim.log.levels.ERROR
-    )
-  end
 end
 
 local function render(bufnr, immediate)
   if active_bufnr ~= bufnr or not server.ready or not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
-  local body = vim.json.encode(document(bufnr))
-  if immediate then
-    client.request(server.port, "/render", body, function(decoded)
-      report_error("render", decoded)
-    end)
-  else
-    client.debounced_request(
-      "render",
-      server.port,
-      "/render",
-      body,
-      M.config.debounce_ms,
-      function(decoded)
-        report_error("render", decoded)
-      end
-    )
+
+  local function send()
+    if active_bufnr == bufnr and server.ready and vim.api.nvim_buf_is_valid(bufnr) then
+      client.send({ type = "render", document = document(bufnr) })
+    end
   end
+
+  if immediate then
+    send()
+    return
+  end
+  client.debounce("render", M.config.debounce_ms, send)
 end
 
 local function sync_cursor(bufnr)
@@ -125,25 +110,15 @@ local function sync_cursor(bufnr)
     border = M.config.nvim.border,
     winblend = M.config.nvim.winblend,
   })
-  local line = vim.api.nvim_win_get_cursor(0)[1]
-  client.debounced_request(
-    "cursor",
-    server.port,
-    "/cursor",
-    vim.json.encode({ line = line }),
-    M.config.cursor_debounce_ms,
-    function(decoded)
-      report_error("cursor sync", decoded)
+  client.debounce("cursor", M.config.cursor_debounce_ms, function()
+    if active_bufnr ~= bufnr or not server.ready or not vim.api.nvim_buf_is_valid(bufnr) then
+      return
     end
-  )
-end
-
-local function stop_events()
-  events_running = false
-  if events_job then
-    vim.fn.jobstop(events_job)
-    events_job = nil
-  end
+    local win = vim.fn.bufwinid(bufnr)
+    if win ~= -1 then
+      client.send({ type = "cursor", line = vim.api.nvim_win_get_cursor(win)[1] })
+    end
+  end)
 end
 
 local function handle_event(bufnr, line)
@@ -155,7 +130,12 @@ local function handle_event(bufnr, line)
     return
   end
   vim.schedule(function()
-    if event.type == "jump" and active_bufnr == bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    if event.type == "error" then
+      vim.notify(
+        "[md-peek] preview server rejected an editor message: " .. tostring(event.error),
+        vim.log.levels.ERROR
+      )
+    elseif event.type == "jump" and active_bufnr == bufnr and vim.api.nvim_buf_is_valid(bufnr) then
       local win = vim.fn.bufwinid(bufnr)
       if win ~= -1 then
         local target =
@@ -177,46 +157,6 @@ local function handle_event(bufnr, line)
       end
     end
   end)
-end
-
-local function start_events(bufnr)
-  stop_events()
-  events_running = true
-  local function connect()
-    if not events_running or not server.ready or active_bufnr ~= bufnr then
-      return
-    end
-    local id
-    id = vim.fn.jobstart({
-      "curl",
-      "-sS",
-      "-N",
-      "--connect-timeout",
-      "2",
-      "-H",
-      "X-Md-Peek-Token: " .. server.token,
-      string.format("http://127.0.0.1:%d/events", server.port),
-    }, {
-      stdout_buffered = false,
-      on_stdout = function(_, data)
-        for _, line in ipairs(data) do
-          handle_event(bufnr, line)
-        end
-      end,
-      on_exit = function()
-        if events_job == id then
-          events_job = nil
-        end
-        if events_running and server.ready and active_bufnr == bufnr then
-          vim.defer_fn(connect, 500)
-        end
-      end,
-    })
-    if id > 0 then
-      events_job = id
-    end
-  end
-  connect()
 end
 
 local function install_buffer_autocmds(bufnr)
@@ -285,7 +225,15 @@ function M.open()
   active_bufnr = bufnr
   generation = generation + 1
   local mine = generation
-  if not server.start({ server_dir = M.config.server_dir, preview = M.config.preview }) then
+  if
+    not server.start({
+      server_dir = M.config.server_dir,
+      preview = M.config.preview,
+      on_event = function(line)
+        handle_event(bufnr, line)
+      end,
+    })
+  then
     active_bufnr = nil
     vim.notify(
       "[md-peek] " .. (server.error or "could not start preview server"),
@@ -301,7 +249,6 @@ function M.open()
     end
     if server.ready then
       install_buffer_autocmds(bufnr)
-      start_events(bufnr)
       render(bufnr, true)
       overlay.update_status(bufnr, {
         enabled = M.config.nvim.status_overlay,
@@ -335,7 +282,6 @@ end
 local function close_preview(wait_for_browser)
   generation = generation + 1
   client.cancel_debounced()
-  stop_events()
   overlay.close_all()
   if server.port then
     browser.close(
