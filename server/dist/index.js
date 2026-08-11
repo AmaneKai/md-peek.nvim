@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 
 // src/asset-path.ts
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 var AssetOutsideDocumentDirectoryError = class extends Error {
   constructor() {
@@ -22,13 +22,27 @@ var AssetOutsideDocumentDirectoryError = class extends Error {
     this.name = "AssetOutsideDocumentDirectoryError";
   }
 };
+function findAssetRoot(documentDirectory) {
+  let current = documentDirectory;
+  while (true) {
+    if (existsSync(resolve(current, ".git"))) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return documentDirectory;
+    }
+    current = parent;
+  }
+}
 function resolveDocumentAssetPath(documentPath, requestedPath) {
   const documentDirectory = realpathSync(dirname(documentPath));
+  const assetRoot = findAssetRoot(documentDirectory);
   const unresolvedAssetPath = resolve(documentDirectory, requestedPath.split(/[?#]/, 1)[0]);
   const assetPath = realpathSync(unresolvedAssetPath);
-  const pathFromDocumentDirectory = relative(documentDirectory, assetPath);
-  const escapesDocumentDirectory = pathFromDocumentDirectory === ".." || pathFromDocumentDirectory.startsWith(`..${sep}`) || isAbsolute(pathFromDocumentDirectory);
-  if (escapesDocumentDirectory) {
+  const pathFromAssetRoot = relative(assetRoot, assetPath);
+  const escapesAssetRoot = pathFromAssetRoot === ".." || pathFromAssetRoot.startsWith(`..${sep}`) || isAbsolute(pathFromAssetRoot);
+  if (escapesAssetRoot) {
     throw new AssetOutsideDocumentDirectoryError();
   }
   return assetPath;

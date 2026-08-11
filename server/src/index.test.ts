@@ -160,4 +160,41 @@ describe('preview server', () => {
     expect(symlinkResponse.status).toBe(403)
     expect(await symlinkResponse.text()).not.toContain('top secret content')
   })
+
+  it('serves assets reached via .. when they stay inside the repository root', async () => {
+    const repositoryRoot = mkdtempSync(join(tmpdir(), 'md-peek-assets-'))
+    temporaryDirectories.push(repositoryRoot)
+    const documentDirectory = join(repositoryRoot, 'docs')
+    const documentPath = join(documentDirectory, 'README.md')
+    const imagesDirectory = join(repositoryRoot, 'images')
+    const imagePath = join(imagesDirectory, 'logo.png')
+    const outsidePath = join(repositoryRoot, '..', 'secret.txt')
+    mkdirSync(join(repositoryRoot, '.git'))
+    mkdirSync(documentDirectory)
+    mkdirSync(imagesDirectory)
+    writeFileSync(documentPath, '# Fixture')
+    writeFileSync(imagePath, 'sibling image')
+    writeFileSync(outsidePath, 'top secret content')
+    temporaryDirectories.push(outsidePath)
+
+    const url = await start()
+    const renderResponse = await fetch(`${url}/render`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: '# Fixture', path: documentPath, line: 1 }),
+    })
+    expect(renderResponse.status).toBe(200)
+
+    const siblingAssetResponse = await fetch(
+      `${url}/asset?path=${encodeURIComponent('../images/logo.png')}`,
+    )
+    expect(siblingAssetResponse.status).toBe(200)
+    expect(await siblingAssetResponse.text()).toBe('sibling image')
+
+    const traversalResponse = await fetch(
+      `${url}/asset?path=${encodeURIComponent('../../secret.txt')}`,
+    )
+    expect(traversalResponse.status).toBe(403)
+    expect(await traversalResponse.text()).not.toContain('top secret content')
+  })
 })
