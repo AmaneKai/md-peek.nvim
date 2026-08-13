@@ -781,31 +781,103 @@ button {
 
 @media print {
   :root {
-    color-scheme: light;
-    --md-bg: #fff;
-    --md-fg: #111;
-    --md-heading: #111;
-    --md-code: #f5f5f5;
-    --md-border: #ddd;
+    /* Theme selectors and user variables outrank this block without !important. */
+    color-scheme: light !important;
+    --md-bg: #fff !important;
+    --md-fg: #111 !important;
+    --md-surface: #f5f5f5 !important;
+    --md-surface-2: #eee !important;
+    --md-border: #ccc !important;
+    --md-muted: #555 !important;
+    --md-accent: #111 !important;
+    --md-heading: #111 !important;
+    --md-code: #f5f5f5 !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body {
+    transition: none;
   }
   #toolbar,
   #toc,
   #toc-resizer,
   #progress,
-  #toast {
+  #toast,
+  #lightbox {
     display: none !important;
   }
   #viewport {
+    width: auto;
     max-width: none;
-    margin: 0;
-    padding: 0;
+    min-height: 0;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  .markdown-body {
+  .markdown-body,
+  #source {
+    width: auto;
     max-width: none;
+  }
+  #source {
+    min-height: 0;
+    padding: 0;
+    overflow: visible;
+    color: #111;
+    border: 0;
+    background: #fff;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .copy-code,
   .code-tools {
-    display: none;
+    display: none !important;
+  }
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 {
+    break-after: avoid-page;
+  }
+  .markdown-body blockquote,
+  .markdown-body table,
+  .markdown-body img,
+  .code-block,
+  .frontmatter,
+  .mermaid,
+  .katex-display {
+    break-inside: avoid-page;
+  }
+  .markdown-body table {
+    display: table;
+    width: 100%;
+    overflow: visible;
+  }
+  .markdown-body th,
+  .markdown-body td {
+    overflow-wrap: anywhere;
+  }
+  .code-block,
+  .code-block pre,
+  .mermaid,
+  .katex-display {
+    overflow: visible;
+  }
+  .code-block code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .hljs,
+  .hljs * {
+    color: #111 !important;
+  }
+  .mermaid svg {
+    max-width: 100%;
+    height: auto;
   }
   [data-source-line].active-source {
     box-shadow: none;
@@ -813,5 +885,6 @@ button {
   }
   a {
     color: inherit !important;
+    text-decoration: underline;
   }
 }
