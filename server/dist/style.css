@@ -640,9 +640,14 @@ button {
   padding: 26px;
   overflow: auto;
   text-align: center;
+  cursor: zoom-in;
   border: 1px solid var(--md-border);
   border-radius: 9px;
   background: var(--md-surface);
+  transition: border-color 0.15s;
+}
+.mermaid:hover {
+  border-color: var(--md-accent);
 }
 .katex-display {
   overflow-x: auto;
@@ -713,6 +718,88 @@ button {
   background: transparent;
   cursor: pointer;
   font-size: 28px;
+}
+
+#diagram-viewer {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.92);
+}
+#diagram-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+#diagram-viewer::backdrop {
+  background: rgba(0, 0, 0, 0.92);
+}
+#diagram-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+#diagram-toolbar button {
+  height: 30px;
+  padding: 0 10px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.diagram-icon-btn {
+  width: 30px;
+  padding: 0;
+  font-size: 16px;
+}
+#diagram-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+#diagram-toolbar button:focus {
+  outline: none;
+}
+#diagram-toolbar button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+#diagram-zoom-level {
+  min-width: 46px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#diagram-close {
+  margin-left: auto;
+  font-size: 20px;
+}
+#diagram-viewport {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+#diagram-viewport.panning {
+  cursor: grabbing;
+}
+#diagram-canvas {
+  transform-origin: center center;
+  user-select: none;
+  will-change: transform;
+}
+#diagram-canvas svg {
+  display: block;
 }
 #toast {
   position: fixed;
@@ -806,7 +893,8 @@ button {
   #toc-resizer,
   #progress,
   #toast,
-  #lightbox {
+  #lightbox,
+  #diagram-viewer {
     display: none !important;
   }
   #viewport {

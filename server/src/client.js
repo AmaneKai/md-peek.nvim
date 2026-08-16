@@ -34,6 +34,10 @@ const status = requiredElement('status')
 const documentTitle = requiredElement('document-title')
 const rawToggle = requiredElement('raw-toggle')
 const lightbox = requiredElement('lightbox')
+const diagramViewer = requiredElement('diagram-viewer')
+const diagramViewport = requiredElement('diagram-viewport')
+const diagramCanvas = requiredElement('diagram-canvas')
+const diagramZoomLevel = requiredElement('diagram-zoom-level')
 const toastElement = requiredElement('toast')
 
 const defaults = {
@@ -667,6 +671,12 @@ article.addEventListener('click', async (event) => {
     return
   }
 
+  const mermaidBlock = event.target.closest('.mermaid')
+  if (mermaidBlock) {
+    openDiagramViewer(mermaidBlock)
+    return
+  }
+
   const mapped = event.target.closest('[data-source-line]')
   if (mapped) {
     send({ type: 'jump', line: Number(mapped.dataset.sourceLine) })
@@ -678,6 +688,113 @@ lightbox.addEventListener('click', (event) => {
     lightbox.close()
   }
 })
+
+let diagramScale = 1
+let diagramX = 0
+let diagramY = 0
+let diagramPan = null
+
+function applyDiagramTransform() {
+  diagramCanvas.style.transform = `translate(${diagramX}px, ${diagramY}px) scale(${diagramScale})`
+  diagramZoomLevel.textContent = `${Math.round(diagramScale * 100)}%`
+}
+
+function diagramNaturalSize() {
+  const svg = diagramCanvas.querySelector('svg')
+  const width = Number.parseFloat(svg?.getAttribute('width'))
+  const height = Number.parseFloat(svg?.getAttribute('height'))
+  return { width: width || 0, height: height || 0 }
+}
+
+function fitDiagram() {
+  const { width, height } = diagramNaturalSize()
+  const rect = diagramViewport.getBoundingClientRect()
+  diagramX = 0
+  diagramY = 0
+  diagramScale = width && height ? Math.min((rect.width - 64) / width, (rect.height - 64) / height, 1) : 1
+  diagramScale = Math.max(diagramScale, 0.05)
+  applyDiagramTransform()
+}
+
+function openDiagramViewer(block) {
+  const svg = block.querySelector('svg')
+  if (!svg) {
+    return
+  }
+
+  const clone = svg.cloneNode(true)
+  const box = svg.viewBox?.baseVal
+  if (box?.width && box?.height) {
+    clone.setAttribute('width', box.width)
+    clone.setAttribute('height', box.height)
+  }
+  clone.style.maxWidth = 'none'
+
+  diagramCanvas.innerHTML = ''
+  diagramCanvas.appendChild(clone)
+  diagramViewer.showModal()
+  diagramViewport.focus({ preventScroll: true })
+  fitDiagram()
+}
+
+function zoomDiagramAt(clientX, clientY, factor) {
+  const rect = diagramViewport.getBoundingClientRect()
+  const cx = clientX - rect.left - rect.width / 2
+  const cy = clientY - rect.top - rect.height / 2
+  const newScale = Math.min(Math.max(diagramScale * factor, 0.05), 8)
+  const pointX = (cx - diagramX) / diagramScale
+  const pointY = (cy - diagramY) / diagramScale
+  diagramX = cx - pointX * newScale
+  diagramY = cy - pointY * newScale
+  diagramScale = newScale
+  applyDiagramTransform()
+}
+
+function zoomDiagramAtCenter(factor) {
+  const rect = diagramViewport.getBoundingClientRect()
+  zoomDiagramAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor)
+}
+
+diagramViewport.addEventListener(
+  'wheel',
+  (event) => {
+    event.preventDefault()
+    zoomDiagramAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0035))
+  },
+  { passive: false },
+)
+
+diagramViewport.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) {
+    return
+  }
+  diagramPan = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: diagramX, startY: diagramY }
+  diagramViewport.setPointerCapture(event.pointerId)
+  diagramViewport.classList.add('panning')
+  event.preventDefault()
+})
+diagramViewport.addEventListener('pointermove', (event) => {
+  if (!diagramPan || event.pointerId !== diagramPan.id) {
+    return
+  }
+  diagramX = diagramPan.startX + (event.clientX - diagramPan.x)
+  diagramY = diagramPan.startY + (event.clientY - diagramPan.y)
+  applyDiagramTransform()
+})
+function endDiagramPan(event) {
+  if (diagramPan && event.pointerId === diagramPan.id) {
+    diagramPan = null
+    diagramViewport.classList.remove('panning')
+  }
+}
+diagramViewport.addEventListener('pointerup', endDiagramPan)
+diagramViewport.addEventListener('pointercancel', endDiagramPan)
+diagramViewport.addEventListener('dblclick', () => fitDiagram())
+
+document.getElementById('diagram-zoom-in').addEventListener('click', () => zoomDiagramAtCenter(1.25))
+document.getElementById('diagram-zoom-out').addEventListener('click', () => zoomDiagramAtCenter(0.8))
+document.getElementById('diagram-zoom-fit').addEventListener('click', () => fitDiagram())
+document.getElementById('diagram-close').addEventListener('click', () => diagramViewer.close())
 
 function setTocOpen(open) {
   document.body.classList.toggle('toc-closed', !open)

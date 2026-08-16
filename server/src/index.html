@@ -46,6 +46,18 @@
     <dialog id="lightbox">
       <button aria-label="Close">×</button><img alt="Expanded preview" />
     </dialog>
+    <dialog id="diagram-viewer">
+      <div id="diagram-toolbar">
+        <button id="diagram-zoom-out" class="diagram-icon-btn" title="Zoom out" aria-label="Zoom out">−</button>
+        <span id="diagram-zoom-level">100%</span>
+        <button id="diagram-zoom-in" class="diagram-icon-btn" title="Zoom in" aria-label="Zoom in">+</button>
+        <button id="diagram-zoom-fit" title="Fit to screen">Fit</button>
+        <button id="diagram-close" class="diagram-icon-btn" title="Close" aria-label="Close">×</button>
+      </div>
+      <div id="diagram-viewport" tabindex="-1">
+        <div id="diagram-canvas"></div>
+      </div>
+    </dialog>
     <div id="toast" role="status"></div>
     <script type="module" src="/client.js"></script>
   </body>
