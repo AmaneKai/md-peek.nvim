@@ -711,7 +711,8 @@ function fitDiagram() {
   const rect = diagramViewport.getBoundingClientRect()
   diagramX = 0
   diagramY = 0
-  diagramScale = width && height ? Math.min((rect.width - 64) / width, (rect.height - 64) / height, 1) : 1
+  diagramScale =
+    width && height ? Math.min((rect.width - 64) / width, (rect.height - 64) / height, 1) : 1
   diagramScale = Math.max(diagramScale, 0.05)
   applyDiagramTransform()
 }
@@ -768,7 +769,13 @@ diagramViewport.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) {
     return
   }
-  diagramPan = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: diagramX, startY: diagramY }
+  diagramPan = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    startX: diagramX,
+    startY: diagramY,
+  }
   diagramViewport.setPointerCapture(event.pointerId)
   diagramViewport.classList.add('panning')
   event.preventDefault()
@@ -791,8 +798,12 @@ diagramViewport.addEventListener('pointerup', endDiagramPan)
 diagramViewport.addEventListener('pointercancel', endDiagramPan)
 diagramViewport.addEventListener('dblclick', () => fitDiagram())
 
-document.getElementById('diagram-zoom-in').addEventListener('click', () => zoomDiagramAtCenter(1.25))
-document.getElementById('diagram-zoom-out').addEventListener('click', () => zoomDiagramAtCenter(0.8))
+document
+  .getElementById('diagram-zoom-in')
+  .addEventListener('click', () => zoomDiagramAtCenter(1.25))
+document
+  .getElementById('diagram-zoom-out')
+  .addEventListener('click', () => zoomDiagramAtCenter(0.8))
 document.getElementById('diagram-zoom-fit').addEventListener('click', () => fitDiagram())
 document.getElementById('diagram-close').addEventListener('click', () => diagramViewer.close())
 

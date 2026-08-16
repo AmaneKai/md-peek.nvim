@@ -8,7 +8,8 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint server/src server/build.mjs"
+    "lint": "eslint server/src server/build.mjs",
+    "nuke": "make check && git diff --exit-code server/dist"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^5.10.0",
