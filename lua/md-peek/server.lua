@@ -3,18 +3,16 @@ local M = { port = nil, url = nil, ready = false, error = nil, token = nil }
 local job_id
 local stopping = false
 
+local uv = vim.uv or vim.loop
+
 local function token()
-  local result = vim
-    .system({
-      "node",
-      "-e",
-      'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))',
-    }, { text = true })
-    :wait()
-  if result.code ~= 0 or not result.stdout or not result.stdout:match("^[0-9a-f]+$") then
+  local bytes = uv.random(32)
+  if type(bytes) ~= "string" or #bytes ~= 32 then
     return nil
   end
-  return result.stdout
+  return (bytes:gsub(".", function(char)
+    return string.format("%02x", char:byte())
+  end))
 end
 
 function M.start(opts)
@@ -37,11 +35,15 @@ function M.start(opts)
   }
   stopping = false
   local started
+  local partial = ""
   started = vim.fn.jobstart({ "node", "dist/index.js" }, {
     cwd = opts.server_dir,
     env = env,
     stdout_buffered = false,
     on_stdout = function(_, data)
+      -- Per :h channel-lines, the first element continues the previous chunk's last line.
+      data[1] = partial .. data[1]
+      partial = table.remove(data)
       for _, line in ipairs(data) do
         local url = line:match("^MD_PEEK_URL=(.+)$")
         if url then

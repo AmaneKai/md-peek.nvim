@@ -145,15 +145,21 @@ local function handle_event(bufnr, line)
       end
     elseif event.type == "open_file" and type(event.path) == "string" then
       local reopen = active_bufnr ~= nil
-      if reopen then
-        M.close()
+      local origin = vim.api.nvim_get_current_buf()
+      -- Edit first: a failure (e.g. E37 on a modified buffer) must not cost the user their preview.
+      local ok, err = pcall(vim.cmd.edit, vim.fn.fnameescape(event.path))
+      if not ok then
+        vim.notify("[md-peek] could not open linked file: " .. tostring(err), vim.log.levels.WARN)
+        return
       end
-      vim.cmd.edit(vim.fn.fnameescape(event.path))
       if event.line then
         vim.api.nvim_win_set_cursor(0, { math.max(1, tonumber(event.line) or 1), 0 })
       end
-      if reopen and is_markdown(vim.api.nvim_get_current_buf()) then
-        M.open()
+      if reopen and vim.api.nvim_get_current_buf() ~= origin then
+        M.close()
+        if is_markdown(vim.api.nvim_get_current_buf()) then
+          M.open()
+        end
       end
     end
   end)

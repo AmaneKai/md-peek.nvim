@@ -91,6 +91,29 @@ describe('preview server', () => {
     editorInput.destroy()
   })
 
+  it('decodes percent-encoded Markdown link targets for the editor', async () => {
+    const editorInput = new PassThrough()
+    let socket: WebSocket | undefined
+    const editorEvent = new Promise<unknown>((resolve) => {
+      void start({ editorInput, onEditorEvent: resolve }).then(async (url) => {
+        await fetch(`${url}/render`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: '', path: '/notes/index.md', line: 1 }),
+        })
+        const opened = new WebSocket(url.replace('http', 'ws') + '/ws')
+        socket = opened
+        opened.once('open', () =>
+          opened.send(JSON.stringify({ type: 'open_file', href: 'my%20notes.md#top' })),
+        )
+      })
+    })
+
+    await expect(editorEvent).resolves.toEqual({ type: 'open_file', path: '/notes/my notes.md' })
+    socket?.close()
+    editorInput.destroy()
+  })
+
   it('reports malformed persistent editor messages', async () => {
     const editorInput = new PassThrough()
     const editorEvent = new Promise<unknown>((resolve) => {

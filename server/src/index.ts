@@ -95,6 +95,14 @@ function tokenMatches(candidate: string | string[] | null | undefined): boolean 
   )
 }
 
+function decodeLinkPath(path: string): string {
+  try {
+    return decodeURIComponent(path)
+  } catch {
+    return path
+  }
+}
+
 function sendJson(response: http.ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -342,7 +350,7 @@ export function createServer(options: PreviewServerOptions = {}) {
           throw new Error('cannot open a link without an active Markdown document')
         }
 
-        const pathWithoutAnchor = message.href.split('#', 1)[0].split('?', 1)[0]
+        const pathWithoutAnchor = decodeLinkPath(message.href.split('#', 1)[0].split('?', 1)[0])
         if (pathWithoutAnchor && !/^[a-z][a-z\d+.-]*:/i.test(pathWithoutAnchor)) {
           emitToEditors({
             type: 'open_file',
@@ -377,6 +385,9 @@ if (import.meta.main) {
       process.stdout.write(`MD_PEEK_EVENT=${JSON.stringify(message)}\n`)
     },
   })
+  // Neovim owns this process; when it goes away (even abruptly) stdin ends, so exit instead of
+  // lingering as an orphaned listener.
+  process.stdin.on('end', () => process.exit(0))
   server.listen(Number(process.env.MD_PEEK_PORT || 0), '127.0.0.1', () => {
     const address = server.address()
     if (address && typeof address !== 'string') {
