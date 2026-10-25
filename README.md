@@ -37,7 +37,7 @@ Browser-extension-only concerns such as remote-origin permissions, response `Con
 
 `browser = "auto"` prefers Chromium's chromeless app mode and falls back to Firefox. Firefox supports every rendering and synchronization feature, but Firefox does not expose a Chromium-style `--app` mode, so its dedicated preview retains normal browser chrome. Run `:checkhealth md-peek` to inspect the setup.
 
-Each preview uses a temporary, isolated browser profile and an attached Neovim job. Closing the preview or exiting Neovim therefore stops only the browser instance owned by md-peek; it does not close the user's normal browser session.
+Chromium previews reuse one isolated profile under Neovim's cache directory (so opening skips first-run setup), falling back to a throwaway profile if another Neovim holds it; Firefox uses a temporary profile each time. Either way the browser runs as an attached Neovim job. Closing the preview or exiting Neovim therefore stops only the browser instance owned by md-peek; it does not close the user's normal browser session.
 
 ## Installation
 
@@ -46,7 +46,7 @@ With lazy.nvim:
 ```lua
 {
   "AmaneKai/md-peek.nvim",
-  build = "cd server && npm install",
+  build = "cd server && npm install --omit=dev",
   ft = { "markdown", "mdx" },
   cmd = { "MdPeekOpen", "MdPeekClose", "MdPeekToggle", "MdPeekRefresh", "MdPeekOutline" },
   config = function()
@@ -60,17 +60,39 @@ With packer.nvim:
 ```lua
 use({
   "AmaneKai/md-peek.nvim",
-  run = "cd server && npm install",
+  run = "cd server && npm install --omit=dev",
   config = function()
     require("md-peek").setup()
   end,
 })
 ```
 
-For a manual install, run `npm install` inside the plugin's `server/` directory, then call:
+For a manual install, run `npm install --omit=dev` inside the plugin's `server/` directory, then call:
 
 ```lua
 require("md-peek").setup()
+```
+
+## Project layout
+
+```text
+lua/md-peek/
+  init.lua      setup, commands, preview session (open/close/render/cursor sync)
+  config.lua    default options
+  events.lua    handles events coming back from the preview (jump, open_file, errors)
+  server.lua    owns the Node job (token, stdin/stdout protocol)
+  client.lua    send + debounce helpers
+  browser/      detect.lua (find browser), process.lua (attached job), profile.lua,
+                window.lua (Firefox resize, close-by-title fallbacks), init.lua (open/close)
+  overlay/      headings.lua, status.lua (HUD), outline.lua, ui.lua (shared helpers)
+  health.lua    :checkhealth md-peek
+server/src/
+  index.ts      process entry point
+  server.ts     HTTP + WebSocket server       security.ts   CSP, loopback/origin/token checks
+  protocol.ts   zod message schemas           asset-path.ts confined asset resolution
+  client/       browser app, bundled to dist/client.js (main.js wires the modules)
+server/dist/    committed build output; regenerate with `make build`
+tests/          headless-Neovim smoke tests
 ```
 
 ## Usage
@@ -116,6 +138,7 @@ require("md-peek").setup({
   cursor_debounce_ms = 45,
   startup_timeout_ms = 10000,
   auto_open = false,
+  debug = false, -- notify how long each stage of opening a preview takes
   browser = "auto", -- auto, chromium, or firefox
 
   window = { width = 1100, height = 1000 },
@@ -156,6 +179,7 @@ require("md-peek").setup({
     typographer = false,
     allow_html = true,
     sanitize = true,
+    remote_images = true, -- false blocks http(s) images through the CSP
 
     max_width = 920,
     font = {

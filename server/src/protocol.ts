@@ -8,10 +8,6 @@ const previewDocumentSchema = z.object({
   line: positiveLineNumber.default(1),
 })
 
-const cursorUpdateSchema = z.object({
-  line: positiveLineNumber,
-})
-
 const browserMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('jump'),
@@ -66,6 +62,7 @@ const previewConfigSchema = z
     typographer: z.boolean().optional(),
     allow_html: z.boolean().optional(),
     sanitize: z.boolean().optional(),
+    remote_images: z.boolean().optional(),
     max_width: z.number().positive().optional(),
     font: previewFontSchema.optional(),
     colors: previewColorsSchema.optional(),
@@ -79,10 +76,6 @@ export type EditorMessage = z.infer<typeof editorMessageSchema>
 
 export function parsePreviewDocument(value: unknown): PreviewDocument {
   return previewDocumentSchema.parse(value)
-}
-
-export function parseCursorLine(value: unknown): number {
-  return cursorUpdateSchema.parse(value).line
 }
 
 export function parseBrowserMessage(value: unknown): BrowserMessage {

@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { WebSocket } from 'ws'
-import { createServer, type PreviewDocument, type PreviewServerOptions } from './index.js'
+import { createServer, type PreviewDocument, type PreviewServerOptions } from './server.js'
 
 interface InitialPreviewMessage {
   type: 'init'
@@ -36,16 +36,33 @@ async function start(options: PreviewServerOptions = {}) {
   return `http://127.0.0.1:${address.port}`
 }
 
-describe('preview server', () => {
-  it('accepts a render and gives new websocket clients the latest document', async () => {
-    const url = await start()
-    const document = { content: '# Hello', path: '/tmp/readme.md', line: 1 }
-    const response = await fetch(`${url}/render`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(document),
+// Documents reach the server only through the editor channel (Neovim's stdin).
+async function startWithDocument(document: PreviewDocument, options: PreviewServerOptions = {}) {
+  const editorInput = new PassThrough()
+  const url = await start({ editorInput, ...options })
+  editorInput.write(`${JSON.stringify({ type: 'render', document })}\n`)
+  // The server consumes stdin asynchronously; wait until a fresh client sees the document.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const init = await new Promise<InitialPreviewMessage>((resolve, reject) => {
+      const socket = new WebSocket(url.replace('http', 'ws') + '/ws')
+      socket.once('message', (value) => {
+        resolve(JSON.parse(value.toString()) as InitialPreviewMessage)
+        socket.close()
+      })
+      socket.once('error', reject)
     })
-    expect(await response.json()).toEqual({ ok: true })
+    if (init.document.path === document.path) {
+      return { url, editorInput }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('server did not apply the document')
+}
+
+describe('preview server', () => {
+  it('gives new websocket clients the latest document', async () => {
+    const document = { content: '# Hello', path: '/tmp/readme.md', line: 1 }
+    const { url, editorInput } = await startWithDocument(document)
 
     const message = await new Promise<InitialPreviewMessage>((resolve, reject) => {
       const socket = new WebSocket(url.replace('http', 'ws') + '/ws')
@@ -57,6 +74,7 @@ describe('preview server', () => {
     })
     expect(message.type).toBe('init')
     expect(message.document).toEqual(document)
+    editorInput.destroy()
   })
 
   it('uses persistent editor input and output for bidirectional updates', async () => {
@@ -92,26 +110,68 @@ describe('preview server', () => {
   })
 
   it('decodes percent-encoded Markdown link targets for the editor', async () => {
-    const editorInput = new PassThrough()
-    let socket: WebSocket | undefined
-    const editorEvent = new Promise<unknown>((resolve) => {
-      void start({ editorInput, onEditorEvent: resolve }).then(async (url) => {
-        await fetch(`${url}/render`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: '', path: '/notes/index.md', line: 1 }),
-        })
-        const opened = new WebSocket(url.replace('http', 'ws') + '/ws')
-        socket = opened
-        opened.once('open', () =>
-          opened.send(JSON.stringify({ type: 'open_file', href: 'my%20notes.md#top' })),
-        )
-      })
-    })
+    const events: unknown[] = []
+    const { url, editorInput } = await startWithDocument(
+      { content: '', path: '/notes/index.md', line: 1 },
+      { onEditorEvent: (event) => events.push(event) },
+    )
+    const socket = new WebSocket(url.replace('http', 'ws') + '/ws')
+    await new Promise<void>((resolve) => socket.once('open', () => resolve()))
+    socket.send(JSON.stringify({ type: 'open_file', href: 'my%20notes.md#top' }))
 
-    await expect(editorEvent).resolves.toEqual({ type: 'open_file', path: '/notes/my notes.md' })
-    socket?.close()
+    await vi.waitFor(() =>
+      expect(events).toEqual([{ type: 'open_file', path: '/notes/my notes.md' }]),
+    )
+    socket.close()
     editorInput.destroy()
+  })
+
+  it('refuses link targets that are not Markdown files', async () => {
+    const events: unknown[] = []
+    const { url, editorInput } = await startWithDocument(
+      { content: '', path: '/notes/index.md', line: 1 },
+      { onEditorEvent: (event) => events.push(event) },
+    )
+    const socket = new WebSocket(url.replace('http', 'ws') + '/ws')
+    await new Promise<void>((resolve) => socket.once('message', () => resolve()))
+    const reply = new Promise<Record<string, unknown>>((resolve) =>
+      socket.once('message', (value) => resolve(JSON.parse(value.toString()))),
+    )
+    socket.send(JSON.stringify({ type: 'open_file', href: '../../etc/hosts' }))
+
+    await expect(reply).resolves.toMatchObject({ type: 'error' })
+    expect(events).toEqual([])
+    socket.close()
+    editorInput.destroy()
+  })
+
+  it('rejects WebSocket handshakes from a foreign origin', async () => {
+    const url = await start()
+    const outcome = await new Promise<string>((resolve) => {
+      const socket = new WebSocket(url.replace('http', 'ws') + '/ws', {
+        headers: { origin: 'https://evil.example' },
+      })
+      socket.once('open', () => resolve('open'))
+      socket.once('error', () => resolve('rejected'))
+    })
+    expect(outcome).toBe('rejected')
+  })
+
+  it('serves a CSP without a wildcard ws: and honours remote_images', async () => {
+    const original = process.env.MD_PEEK_CONFIG
+    process.env.MD_PEEK_CONFIG = JSON.stringify({ remote_images: false })
+    try {
+      const url = await start()
+      const csp = (await fetch(`${url}/`)).headers.get('content-security-policy') ?? ''
+      expect(csp).toContain("img-src 'self' data:;")
+      expect(csp).not.toMatch(/connect-src[^;]*\sws:(\s|;|$)/)
+    } finally {
+      if (original === undefined) {
+        delete process.env.MD_PEEK_CONFIG
+      } else {
+        process.env.MD_PEEK_CONFIG = original
+      }
+    }
   })
 
   it('reports malformed persistent editor messages', async () => {
@@ -161,13 +221,11 @@ describe('preview server', () => {
     writeFileSync(secretPath, 'top secret content')
     symlinkSync(secretPath, join(documentDirectory, 'linked-secret.txt'))
 
-    const url = await start()
-    const renderResponse = await fetch(`${url}/render`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: '# Fixture', path: documentPath, line: 1 }),
+    const { url } = await startWithDocument({
+      content: '# Fixture',
+      path: documentPath,
+      line: 1,
     })
-    expect(renderResponse.status).toBe(200)
 
     const localAssetResponse = await fetch(`${url}/asset?path=local.txt`)
     expect(localAssetResponse.status).toBe(200)
@@ -200,13 +258,11 @@ describe('preview server', () => {
     writeFileSync(outsidePath, 'top secret content')
     temporaryDirectories.push(outsidePath)
 
-    const url = await start()
-    const renderResponse = await fetch(`${url}/render`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: '# Fixture', path: documentPath, line: 1 }),
+    const { url } = await startWithDocument({
+      content: '# Fixture',
+      path: documentPath,
+      line: 1,
     })
-    expect(renderResponse.status).toBe(200)
 
     const siblingAssetResponse = await fetch(
       `${url}/asset?path=${encodeURIComponent('../images/logo.png')}`,

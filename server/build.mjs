@@ -14,7 +14,7 @@ await esbuild.build({
 })
 
 await esbuild.build({
-  entryPoints: ['src/client.js'],
+  entryPoints: { client: 'src/client/main.js' },
   bundle: true,
   splitting: true,
   platform: 'browser',

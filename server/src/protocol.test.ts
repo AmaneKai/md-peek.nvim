@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseBrowserMessage,
-  parseCursorLine,
   parseEditorMessage,
   parsePreviewConfig,
   parsePreviewDocument,
@@ -17,10 +16,10 @@ describe('preview protocol', () => {
     expect(parsePreviewDocument({ content: '', path: '', line: '4' }).line).toBe(4)
   })
 
-  it('rejects malformed document and cursor updates', () => {
+  it('rejects malformed document and cursor messages', () => {
     expect(() => parsePreviewDocument({ content: 42, path: '/tmp/readme.md' })).toThrow()
-    expect(() => parseCursorLine({ line: 0 })).toThrow()
-    expect(() => parseCursorLine({ line: 'not-a-line' })).toThrow()
+    expect(() => parseEditorMessage({ type: 'cursor', line: 0 })).toThrow()
+    expect(() => parseEditorMessage({ type: 'cursor', line: 'not-a-line' })).toThrow()
   })
 
   it('only accepts known browser message shapes', () => {

@@ -4,62 +4,14 @@ local server = require("md-peek.server")
 local client = require("md-peek.client")
 local browser = require("md-peek.browser")
 local overlay = require("md-peek.overlay")
+local events = require("md-peek.events")
 
-local function plugin_root()
-  local source = debug.getinfo(1, "S").source
-  local file = source:match("^@(.*)$") or source
-  return vim.fn.fnamemodify(file, ":h:h:h")
-end
-
-M.config = {
-  server_dir = plugin_root() .. "/server",
-  debounce_ms = 80,
-  cursor_debounce_ms = 45,
-  startup_timeout_ms = 10000,
-  auto_open = false,
-  browser = "auto",
-  window = { width = 1100, height = 1000 },
-  position = { x = 40, y = 40 },
-  nvim = {
-    status_overlay = false,
-    status_width = 42,
-    outline_width = 76,
-    outline_height = 20,
-    border = "rounded",
-    winblend = 6,
-  },
-  keymaps = {
-    open = "<leader>mo",
-    close = "<leader>mc",
-    toggle = "<leader>mp",
-    refresh = "<leader>mr",
-    outline = "<leader>mm",
-  },
-  preview = {
-    theme = "dark",
-    toc = true,
-    toc_open = false,
-    math = true,
-    mermaid = true,
-    emoji = true,
-    raw_toggle = true,
-    code_copy = true,
-    scroll_sync = true,
-    preserve_scroll = true,
-    breaks = false,
-    linkify = true,
-    typographer = false,
-    allow_html = true,
-    sanitize = true,
-    max_width = 920,
-    font = {},
-    colors = {},
-    custom_css = "",
-  },
-}
+M.config = require("md-peek.config")
 
 local active_bufnr
 local generation = 0
+local last_sent -- content/path of the last render, so unchanged buffers are not re-sent
+local open_started
 local aug = vim.api.nvim_create_augroup("MdPeek", { clear = true })
 
 local function is_markdown(bufnr)
@@ -89,7 +41,18 @@ local function render(bufnr, immediate)
 
   local function send()
     if active_bufnr == bufnr and server.ready and vim.api.nvim_buf_is_valid(bufnr) then
-      client.send({ type = "render", document = document(bufnr) })
+      local doc = document(bufnr)
+      -- TextChanged, BufWritePost and FileChangedShellPost often fire for identical content.
+      if
+        not immediate
+        and last_sent
+        and last_sent.content == doc.content
+        and last_sent.path == doc.path
+      then
+        return
+      end
+      last_sent = { content = doc.content, path = doc.path }
+      client.send({ type = "render", document = doc })
     end
   end
 
@@ -122,47 +85,17 @@ local function sync_cursor(bufnr)
 end
 
 local function handle_event(bufnr, line)
-  if line == "" then
-    return
-  end
-  local ok, event = pcall(vim.json.decode, line)
-  if not ok or type(event) ~= "table" then
-    return
-  end
-  vim.schedule(function()
-    if event.type == "error" then
-      vim.notify(
-        "[md-peek] preview server rejected an editor message: " .. tostring(event.error),
-        vim.log.levels.ERROR
-      )
-    elseif event.type == "jump" and active_bufnr == bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-      local win = vim.fn.bufwinid(bufnr)
-      if win ~= -1 then
-        local target =
-          math.max(1, math.min(tonumber(event.line) or 1, vim.api.nvim_buf_line_count(bufnr)))
-        vim.api.nvim_set_current_win(win)
-        vim.api.nvim_win_set_cursor(win, { target, 0 })
-      end
-    elseif event.type == "open_file" and type(event.path) == "string" then
-      local reopen = active_bufnr ~= nil
-      local origin = vim.api.nvim_get_current_buf()
-      -- Edit first: a failure (e.g. E37 on a modified buffer) must not cost the user their preview.
-      local ok, err = pcall(vim.cmd.edit, vim.fn.fnameescape(event.path))
-      if not ok then
-        vim.notify("[md-peek] could not open linked file: " .. tostring(err), vim.log.levels.WARN)
-        return
-      end
-      if event.line then
-        vim.api.nvim_win_set_cursor(0, { math.max(1, tonumber(event.line) or 1), 0 })
-      end
-      if reopen and vim.api.nvim_get_current_buf() ~= origin then
-        M.close()
-        if is_markdown(vim.api.nvim_get_current_buf()) then
-          M.open()
-        end
-      end
-    end
-  end)
+  events.handle(bufnr, line, {
+    is_active = function()
+      return active_bufnr == bufnr
+    end,
+    has_preview = function()
+      return active_bufnr ~= nil
+    end,
+    is_markdown = is_markdown,
+    open = M.open,
+    close = M.close,
+  })
 end
 
 local function install_buffer_autocmds(bufnr)
@@ -229,6 +162,8 @@ function M.open()
   end
 
   active_bufnr = bufnr
+  last_sent = nil
+  open_started = uv.hrtime()
   generation = generation + 1
   local mine = generation
   if
@@ -249,11 +184,19 @@ function M.open()
   end
 
   local started = uv.hrtime()
+  local function trace(stage)
+    if M.config.debug then
+      vim.notify(
+        string.format("[md-peek] %s after %.0f ms", stage, (uv.hrtime() - open_started) / 1e6)
+      )
+    end
+  end
   local function await_ready()
     if mine ~= generation or active_bufnr ~= bufnr then
       return
     end
     if server.ready then
+      trace("server ready")
       install_buffer_autocmds(bufnr)
       render(bufnr, true)
       overlay.update_status(bufnr, {
@@ -268,6 +211,7 @@ function M.open()
         M.config.position,
         M.config.browser
       )
+      trace("browser launched")
       return
     end
     if server.error then
@@ -298,6 +242,7 @@ local function close_preview(wait_for_browser)
   end
   server.stop()
   active_bufnr = nil
+  last_sent = nil
 end
 
 function M.close()

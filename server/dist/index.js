@@ -4,9 +4,8 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/index.ts
+// src/server.ts
 import http from "node:http";
-import { timingSafeEqual } from "node:crypto";
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { basename, dirname as dirname2, extname, resolve as resolve2 } from "node:path";
 import { createInterface } from "node:readline";
@@ -14569,9 +14568,6 @@ var previewDocumentSchema = external_exports.object({
   path: external_exports.string(),
   line: positiveLineNumber.default(1)
 });
-var cursorUpdateSchema = external_exports.object({
-  line: positiveLineNumber
-});
 var browserMessageSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({
     type: external_exports.literal("jump"),
@@ -14620,17 +14616,12 @@ var previewConfigSchema = external_exports.object({
   typographer: external_exports.boolean().optional(),
   allow_html: external_exports.boolean().optional(),
   sanitize: external_exports.boolean().optional(),
+  remote_images: external_exports.boolean().optional(),
   max_width: external_exports.number().positive().optional(),
   font: previewFontSchema.optional(),
   colors: previewColorsSchema.optional(),
   custom_css: external_exports.string().optional()
 }).catchall(external_exports.unknown());
-function parsePreviewDocument(value) {
-  return previewDocumentSchema.parse(value);
-}
-function parseCursorLine(value) {
-  return cursorUpdateSchema.parse(value).line;
-}
 function parseBrowserMessage(value) {
   return browserMessageSchema.parse(value);
 }
@@ -14641,21 +14632,63 @@ function parsePreviewConfig(serializedConfig) {
   return previewConfigSchema.parse(JSON.parse(serializedConfig || "{}"));
 }
 
-// src/index.ts
+// src/security.ts
+import { timingSafeEqual } from "node:crypto";
+function buildContentSecurityPolicy(allowRemoteImages) {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data:${allowRemoteImages ? " http: https:" : ""}`,
+    "font-src 'self'",
+    // The page only ever talks to this loopback server, never to an arbitrary ws: host.
+    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'"
+  ].join("; ");
+}
+function isLoopbackRequest(request) {
+  try {
+    const hostname3 = new URL(`http://${request.headers.host}`).hostname;
+    return hostname3 === "127.0.0.1" || hostname3 === "localhost" || hostname3 === "[::1]";
+  } catch {
+    return false;
+  }
+}
+function isSameOrigin(request) {
+  const origin = request.headers.origin;
+  if (origin === void 0) {
+    return true;
+  }
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+function createAuthorizer(token) {
+  const tokenBytes = token ? Buffer.from(token, "utf8") : void 0;
+  function tokenMatches(candidate) {
+    if (typeof candidate !== "string" || !tokenBytes) {
+      return false;
+    }
+    const candidateBytes = Buffer.from(candidate, "utf8");
+    return candidateBytes.length === tokenBytes.length && timingSafeEqual(candidateBytes, tokenBytes);
+  }
+  return (request, url2) => {
+    if (!tokenBytes) {
+      return true;
+    }
+    return tokenMatches(request.headers["x-md-peek-token"]) || tokenMatches(url2.searchParams.get("token"));
+  };
+}
+
+// src/server.ts
 var distributionDirectory = dirname2(fileURLToPath(import.meta.url));
-var authenticationToken = process.env.MD_PEEK_TOKEN;
-var authenticationTokenBytes = authenticationToken ? Buffer.from(authenticationToken, "utf8") : void 0;
 var initialDocument = { content: "", path: "", line: 1 };
-var contentSecurityPolicy = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: http: https:",
-  "font-src 'self'",
-  "connect-src 'self' ws:",
-  "object-src 'none'",
-  "base-uri 'none'"
-].join("; ");
+var markdownExtensions = /* @__PURE__ */ new Set([".md", ".markdown", ".mdx"]);
 var contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -14678,27 +14711,6 @@ function loadPreviewConfig() {
     return {};
   }
 }
-function isLoopbackRequest(request) {
-  try {
-    const hostname3 = new URL(`http://${request.headers.host}`).hostname;
-    return hostname3 === "127.0.0.1" || hostname3 === "localhost" || hostname3 === "[::1]";
-  } catch {
-    return false;
-  }
-}
-function isAuthorized(request, url2) {
-  if (!authenticationTokenBytes) {
-    return true;
-  }
-  return tokenMatches(request.headers["x-md-peek-token"]) || tokenMatches(url2.searchParams.get("token"));
-}
-function tokenMatches(candidate) {
-  if (typeof candidate !== "string" || !authenticationTokenBytes) {
-    return false;
-  }
-  const candidateBytes = Buffer.from(candidate, "utf8");
-  return candidateBytes.length === authenticationTokenBytes.length && timingSafeEqual(candidateBytes, authenticationTokenBytes);
-}
 function decodeLinkPath(path) {
   try {
     return decodeURIComponent(path);
@@ -14713,23 +14725,6 @@ function sendJson(response, status, value) {
   });
   response.end(JSON.stringify(value));
 }
-function readRequestBody(request, limit = 12 * 1024 * 1024) {
-  return new Promise((resolveBody, reject) => {
-    let size = 0;
-    const chunks = [];
-    request.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > limit) {
-        reject(new Error("request body is too large"));
-        request.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => resolveBody(Buffer.concat(chunks).toString("utf8")));
-    request.on("error", reject);
-  });
-}
 function streamFile(response, path, headers) {
   response.writeHead(200, headers);
   const stream = createReadStream(path);
@@ -14741,9 +14736,11 @@ function errorMessage(error51) {
 }
 function createServer(options = {}) {
   let currentDocument = { ...initialDocument };
+  const authenticationToken = process.env.MD_PEEK_TOKEN;
+  const isAuthorized = createAuthorizer(authenticationToken);
   const previewConfig = loadPreviewConfig();
+  const contentSecurityPolicy = buildContentSecurityPolicy(previewConfig.remote_images !== false);
   const browserSockets = /* @__PURE__ */ new Set();
-  const editorSubscribers = /* @__PURE__ */ new Set();
   let editorLines;
   function broadcastToBrowsers(message) {
     const payload = JSON.stringify(message);
@@ -14755,11 +14752,6 @@ function createServer(options = {}) {
   }
   function emitToEditors(message) {
     options.onEditorEvent?.(message);
-    const payload = `${JSON.stringify(message)}
-`;
-    for (const editorSubscriber of editorSubscribers) {
-      editorSubscriber.write(payload);
-    }
   }
   function applyEditorMessage(value) {
     const message = parseEditorMessage(value);
@@ -14783,21 +14775,6 @@ function createServer(options = {}) {
         emitToEditors({ type: "error", error: errorMessage(error51) });
       }
     });
-  }
-  async function handleDocumentUpdate(request, response, pathname) {
-    try {
-      const body = JSON.parse(await readRequestBody(request));
-      if (pathname === "/render") {
-        currentDocument = parsePreviewDocument(body);
-        broadcastToBrowsers({ type: "render", document: currentDocument });
-      } else {
-        currentDocument.line = parseCursorLine(body);
-        broadcastToBrowsers({ type: "cursor", line: currentDocument.line });
-      }
-      sendJson(response, 200, { ok: true });
-    } catch (error51) {
-      sendJson(response, 400, { ok: false, error: errorMessage(error51) });
-    }
   }
   const server = http.createServer(async (request, response) => {
     if (!isLoopbackRequest(request)) {
@@ -14865,33 +14842,12 @@ function createServer(options = {}) {
         return sendJson(response, 404, { ok: false, error: "asset not found" });
       }
     }
-    if (request.method === "GET" && url2.pathname === "/events") {
-      if (!isAuthorized(request, url2)) {
-        return sendJson(response, 401, { ok: false, error: "unauthorized" });
-      }
-      response.writeHead(200, {
-        "content-type": "application/x-ndjson",
-        "cache-control": "no-store",
-        connection: "keep-alive"
-      });
-      response.write("\n");
-      editorSubscribers.add(response);
-      request.on("close", () => editorSubscribers.delete(response));
-      return;
-    }
-    const acceptsDocumentUpdate = request.method === "POST" && ["/render", "/cursor"].includes(url2.pathname);
-    if (acceptsDocumentUpdate) {
-      if (!isAuthorized(request, url2)) {
-        return sendJson(response, 401, { ok: false, error: "unauthorized" });
-      }
-      return handleDocumentUpdate(request, response, url2.pathname);
-    }
     return sendJson(response, 404, { ok: false, error: "not found" });
   });
   const websocketServer = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
     const url2 = new URL(request.url || "/", `http://${request.headers.host}`);
-    if (!isLoopbackRequest(request) || url2.pathname !== "/ws" || !isAuthorized(request, url2)) {
+    if (!isLoopbackRequest(request) || !isSameOrigin(request) || url2.pathname !== "/ws" || !isAuthorized(request, url2)) {
       return socket.destroy();
     }
     websocketServer.handleUpgrade(request, socket, head, (browserSocket) => {
@@ -14915,10 +14871,11 @@ function createServer(options = {}) {
         }
         const pathWithoutAnchor = decodeLinkPath(message.href.split("#", 1)[0].split("?", 1)[0]);
         if (pathWithoutAnchor && !/^[a-z][a-z\d+.-]*:/i.test(pathWithoutAnchor)) {
-          emitToEditors({
-            type: "open_file",
-            path: resolve2(dirname2(currentDocument.path), pathWithoutAnchor)
-          });
+          const target = resolve2(dirname2(currentDocument.path), pathWithoutAnchor);
+          if (!markdownExtensions.has(extname(target).toLowerCase())) {
+            throw new Error(`refusing to open non-Markdown link target: ${pathWithoutAnchor}`);
+          }
+          emitToEditors({ type: "open_file", path: target });
         }
       } catch (error51) {
         browserSocket.send(JSON.stringify({ type: "error", error: errorMessage(error51) }));
@@ -14931,13 +14888,12 @@ function createServer(options = {}) {
     for (const browserSocket of browserSockets) {
       browserSocket.close();
     }
-    for (const editorSubscriber of editorSubscribers) {
-      editorSubscriber.end();
-    }
     websocketServer.close();
   });
   return server;
 }
+
+// src/index.ts
 if (import.meta.main) {
   const server = createServer({
     editorInput: process.stdin,

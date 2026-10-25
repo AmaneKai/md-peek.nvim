@@ -9,7 +9,9 @@ local function remove_profile(profile_directory)
 end
 
 local function forget(process)
-  remove_profile(process.profile_directory)
+  if not process.keep_profile then
+    remove_profile(process.profile_directory)
+  end
   if active_process == process then
     active_process = nil
   end
@@ -45,6 +47,10 @@ function M.command(executable, kind, url, profile_directory, window, position)
       "--user-data-dir=" .. profile_directory,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-extensions",
+      "--disable-sync",
+      "--disable-background-networking",
+      "--disable-component-update",
     }
   end
 
@@ -54,7 +60,8 @@ function M.command(executable, kind, url, profile_directory, window, position)
   return command
 end
 
-function M.start(command, tag, profile_directory)
+--- `keep_profile` marks a profile that outlives the preview (reused to skip first-run setup).
+function M.start(command, tag, profile_directory, keep_profile)
   if active_process then
     stop_process(active_process, true)
   end
@@ -62,6 +69,7 @@ function M.start(command, tag, profile_directory)
   local process = {
     job_id = 0,
     profile_directory = profile_directory,
+    keep_profile = keep_profile,
     tag = tag,
   }
   active_process = process

@@ -1,7 +1,19 @@
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h")
 vim.opt.runtimepath:append(root)
 
-local browser_process = require("md-peek.browser_process")
+-- Every module must at least load; the tests below stub most of them out.
+for _, file in ipairs(vim.fn.globpath(root, "lua/md-peek/**/*.lua", false, true)) do
+  local name = file:match("lua/(.+)%.lua$"):gsub("/init$", ""):gsub("/", ".")
+  local ok, err = pcall(require, name)
+  assert(ok, "failed to load " .. name .. ": " .. tostring(err))
+end
+for name in pairs(package.loaded) do
+  if name:match("^md%-peek") then
+    package.loaded[name] = nil -- the tests below install stubs before requiring these again
+  end
+end
+
+local browser_process = require("md-peek.browser.process")
 local preview_url = "http://127.0.0.1:4321/?token=test"
 local profile_directory = vim.fn.tempname() .. "-md-peek-test"
 local chromium_command = browser_process.command(
@@ -58,9 +70,14 @@ local mock_server = {
   stop = function() end,
 }
 package.loaded["md-peek.server"] = mock_server
+local sent = {}
 package.loaded["md-peek.client"] = {
-  send = function() end,
-  debounce = function() end,
+  send = function(message)
+    table.insert(sent, message)
+  end,
+  debounce = function(_, _, callback)
+    callback()
+  end,
   cancel_debounced = function() end,
 }
 local browser_close_options
@@ -123,6 +140,23 @@ overlay.close_all()
 
 peek.open()
 assert(started == 1)
+peek.close()
+
+-- Unchanged buffers are not re-rendered, but an explicit refresh always is.
+mock_server.ready = true
+mock_server.port = 4321
+mock_server.url = "http://127.0.0.1:4321/"
+mock_server.token = "t"
+peek.open()
+assert(#sent == 1, "open should send the first render")
+vim.api.nvim_exec_autocmds("TextChanged", { buffer = buffer })
+assert(#sent == 1, "identical content must not be re-sent")
+vim.api.nvim_buf_set_lines(buffer, -1, -1, false, { "more" })
+vim.api.nvim_exec_autocmds("TextChanged", { buffer = buffer })
+assert(#sent == 2, "changed content must be sent")
+peek.refresh()
+assert(#sent == 3, "refresh must always send")
+mock_server.ready = false
 peek.close()
 
 mock_server.port = 4321
