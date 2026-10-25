@@ -25,6 +25,11 @@ describe('preview protocol', () => {
   it('only accepts known browser message shapes', () => {
     expect(parseBrowserMessage({ type: 'jump', line: '7' })).toEqual({ type: 'jump', line: 7 })
     expect(() => parseBrowserMessage({ type: 'open_file', href: '' })).toThrow()
+    expect(parseBrowserMessage({ type: 'toggle_task', line: '3' })).toEqual({
+      type: 'toggle_task',
+      line: 3,
+    })
+    expect(() => parseBrowserMessage({ type: 'toggle_task', line: 0 })).toThrow()
     expect(() => parseBrowserMessage({ type: 'unknown' })).toThrow()
   })
 

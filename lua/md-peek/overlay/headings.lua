@@ -4,6 +4,14 @@ local M = {}
 
 local heading_cache = {}
 
+-- Entries are keyed by buffer, so drop them when a buffer goes away instead of growing forever.
+vim.api.nvim_create_autocmd("BufWipeout", {
+  group = vim.api.nvim_create_augroup("MdPeekHeadingCache", { clear = true }),
+  callback = function(args)
+    heading_cache[args.buf] = nil
+  end,
+})
+
 function M.headings(bufnr)
   if not ui.valid_buf(bufnr) then
     return {}

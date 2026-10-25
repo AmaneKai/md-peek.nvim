@@ -12,11 +12,13 @@ local function profile_in_use(profile_directory)
   return pid == nil or uv.kill(pid, 0) == 0
 end
 
---- Reusing one Chromium profile skips first-run setup on every open. It is still separate from
---- the user's normal profile. If another Neovim holds it, fall back to a throwaway profile.
-function M.choose(found)
-  if found.kind == "chromium" then
-    local persistent = vim.fs.joinpath(vim.fn.stdpath("cache"), "md-peek", "chromium-profile")
+--- Returns `directory, keep`. A driver that allows it reuses one profile under Neovim's cache, so
+--- every open skips first-run setup; it is still separate from the user's own profile. If
+--- another Neovim holds it, or the driver wants a fresh one, a throwaway directory is used.
+function M.choose(driver)
+  if driver.persistent_profile then
+    local persistent =
+      vim.fs.joinpath(vim.fn.stdpath("cache"), "md-peek", driver.kind .. "-profile")
     if not profile_in_use(persistent) and vim.fn.mkdir(persistent, "p") == 1 then
       return persistent, true
     end

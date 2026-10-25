@@ -36,16 +36,38 @@ function M.check()
     )
   end
   local browser_preference = require("md-peek").config.browser
-  local found = require("md-peek.browser").find(browser_preference)
+  local detect = require("md-peek.browser.detect")
+  local found = detect.find(browser_preference)
   if found then
     vim.health.ok(
       (found.kind == "firefox" and "Firefox" or "Chromium")
-        .. " browser found (browser = "
+        .. " browser found: "
+        .. found.name
+        .. " (browser = "
         .. browser_preference
         .. ")"
     )
   else
     vim.health.warn("Configured browser not found; previews will use a normal browser tab")
+  end
+
+  -- Firefox cannot be placed by command-line flags, so it needs a window tool to honour the
+  -- configured size and position. Chromium does not.
+  local tools = detect.capabilities()
+  local available = {}
+  for name, present in pairs(tools) do
+    if present then
+      table.insert(available, name)
+    end
+  end
+  table.sort(available)
+  if #available > 0 then
+    vim.health.ok("window control available: " .. table.concat(available, ", "))
+  elseif found and found.kind == "firefox" and found.os == "linux" then
+    vim.health.warn(
+      "no window tool found; Firefox will open at its default size and position",
+      { "Install xdotool or wmctrl to let md-peek size and place the Firefox window" }
+    )
   end
 end
 

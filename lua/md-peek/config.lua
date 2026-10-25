@@ -10,6 +10,9 @@ return {
   cursor_debounce_ms = 45,
   startup_timeout_ms = 10000,
   auto_open = false,
+  follow = true, -- keep the preview on whichever Markdown buffer you are in
+  port = 0, -- 0 picks a free port; set one to forward it over SSH
+  diagnostics = true, -- warn about missing link/image files and unknown #anchors while previewing
   debug = false, -- print how long each stage of opening a preview takes
   browser = "auto",
   window = { width = 1100, height = 1000 },
@@ -46,6 +49,9 @@ return {
     allow_html = true,
     sanitize = true,
     remote_images = true, -- false blocks http(s) images via the CSP
+    -- Which local files a document may embed: "document" (its own folder and below), "git" (the
+    -- whole repository), or an absolute directory. Only media types are ever served.
+    asset_root = "document",
     max_width = 920,
     font = {},
     colors = {},

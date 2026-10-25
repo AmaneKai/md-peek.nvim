@@ -17,12 +17,23 @@ const browserMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('open_file'),
     href: z.string().min(1),
   }),
+  z.object({
+    type: z.literal('toggle_task'),
+    line: positiveLineNumber,
+  }),
+  // Sent after each render so the editor can tell the preview is alive and how long it took.
+  z.object({
+    type: z.literal('rendered'),
+    latency_ms: z.number().nonnegative().optional(),
+  }),
 ])
 
 const editorMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('render'),
     document: previewDocumentSchema,
+    // Epoch milliseconds when the editor sent this render, used to measure keystroke latency.
+    sent_at: z.number().optional(),
   }),
   z.object({
     type: z.literal('cursor'),
@@ -63,6 +74,9 @@ const previewConfigSchema = z
     allow_html: z.boolean().optional(),
     sanitize: z.boolean().optional(),
     remote_images: z.boolean().optional(),
+    // 'document' (default) | 'git' | an absolute directory
+    asset_root: z.string().optional(),
+    asset_extensions: z.array(z.string()).optional(),
     max_width: z.number().positive().optional(),
     font: previewFontSchema.optional(),
     colors: previewColorsSchema.optional(),
@@ -87,5 +101,5 @@ export function parseEditorMessage(value: unknown): EditorMessage {
 }
 
 export function parsePreviewConfig(serializedConfig: string | undefined): Record<string, unknown> {
-  return previewConfigSchema.parse(JSON.parse(serializedConfig || '{}'))
+  return previewConfigSchema.parse(normalizeEmptyLuaTable(JSON.parse(serializedConfig || '{}')))
 }

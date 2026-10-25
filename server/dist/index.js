@@ -4,24 +4,53 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/server.ts
+// src/core/daemon.ts
 import http from "node:http";
-import { createReadStream, readFileSync, statSync } from "node:fs";
-import { basename, dirname as dirname2, extname, resolve as resolve2 } from "node:path";
+import { dirname as dirname3 } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
-import { WebSocket, WebSocketServer } from "ws";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
-// src/asset-path.ts
+// src/http/asset-handler.ts
+import { statSync } from "node:fs";
+import { extname as extname2 } from "node:path";
+
+// src/http/asset-path.ts
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-var AssetOutsideDocumentDirectoryError = class extends Error {
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+var defaultAssetExtensions = /* @__PURE__ */ new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".svg",
+  ".ico",
+  ".bmp",
+  ".pdf",
+  ".mp4",
+  ".webm",
+  ".ogg",
+  ".mp3",
+  ".wav"
+]);
+var defaultAssetSandbox = {
+  allowGitRoot: false,
+  allowedExtensions: defaultAssetExtensions
+};
+var AssetOutsideRootError = class extends Error {
   constructor() {
-    super("asset path escapes the document directory");
-    this.name = "AssetOutsideDocumentDirectoryError";
+    super("asset path escapes the allowed directory");
+    this.name = "AssetOutsideRootError";
   }
 };
-function findAssetRoot(documentDirectory) {
+var AssetTypeNotAllowedError = class extends Error {
+  constructor(extension) {
+    super(`asset type not allowed: ${extension || "(no extension)"}`);
+    this.name = "AssetTypeNotAllowedError";
+  }
+};
+function findGitRoot(documentDirectory) {
   let current = documentDirectory;
   while (true) {
     if (existsSync(resolve(current, ".git"))) {
@@ -34,17 +63,223 @@ function findAssetRoot(documentDirectory) {
     current = parent;
   }
 }
-function resolveDocumentAssetPath(documentPath, requestedPath) {
+function assetRoot(documentDirectory, sandbox) {
+  if (sandbox.customRoot) {
+    return realpathSync(sandbox.customRoot);
+  }
+  return sandbox.allowGitRoot ? findGitRoot(documentDirectory) : documentDirectory;
+}
+function resolveDocumentAssetPath(documentPath, requestedPath, sandbox = defaultAssetSandbox) {
   const documentDirectory = realpathSync(dirname(documentPath));
-  const assetRoot = findAssetRoot(documentDirectory);
+  const root = assetRoot(documentDirectory, sandbox);
   const unresolvedAssetPath = resolve(documentDirectory, requestedPath.split(/[?#]/, 1)[0]);
   const assetPath = realpathSync(unresolvedAssetPath);
-  const pathFromAssetRoot = relative(assetRoot, assetPath);
-  const escapesAssetRoot = pathFromAssetRoot === ".." || pathFromAssetRoot.startsWith(`..${sep}`) || isAbsolute(pathFromAssetRoot);
-  if (escapesAssetRoot) {
-    throw new AssetOutsideDocumentDirectoryError();
+  const pathFromRoot = relative(root, assetPath);
+  const escapesRoot = pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot);
+  if (escapesRoot) {
+    throw new AssetOutsideRootError();
+  }
+  const extension = extname(assetPath).toLowerCase();
+  if (!sandbox.allowedExtensions.has(extension)) {
+    throw new AssetTypeNotAllowedError(extension);
   }
   return assetPath;
+}
+
+// src/http/respond.ts
+import { createReadStream } from "node:fs";
+var contentTypes = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
+  ".ico": "image/x-icon",
+  ".bmp": "image/bmp",
+  ".pdf": "application/pdf",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav"
+};
+function sendJson(response, status, value) {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  response.end(JSON.stringify(value));
+}
+function streamFile(response, path, headers) {
+  response.writeHead(200, headers);
+  const stream = createReadStream(path);
+  stream.on("error", () => response.destroy());
+  stream.pipe(response);
+}
+
+// src/http/asset-handler.ts
+function createAssetHandler(options) {
+  return (response, url2) => {
+    const requestedPath = url2.searchParams.get("path");
+    const documentPath = options.getDocumentPath();
+    if (!requestedPath || requestedPath.includes("\0") || !documentPath) {
+      return sendJson(response, 400, { ok: false, error: "invalid asset path" });
+    }
+    try {
+      const assetPath = resolveDocumentAssetPath(documentPath, requestedPath, options.sandbox);
+      if (!statSync(assetPath).isFile()) {
+        return sendJson(response, 404, { ok: false, error: "asset not found" });
+      }
+      return streamFile(response, assetPath, {
+        "content-type": contentTypes[extname2(assetPath).toLowerCase()] || "application/octet-stream",
+        "cache-control": "no-cache",
+        // A linked SVG or PDF must never run as a page of its own if someone navigates to it.
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+      });
+    } catch (error51) {
+      if (error51 instanceof AssetOutsideRootError || error51 instanceof AssetTypeNotAllowedError) {
+        return sendJson(response, 403, { ok: false, error: error51.message });
+      }
+      return sendJson(response, 404, { ok: false, error: "asset not found" });
+    }
+  };
+}
+
+// src/core/security.ts
+import { timingSafeEqual } from "node:crypto";
+function buildContentSecurityPolicy(allowRemoteImages) {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data:${allowRemoteImages ? " http: https:" : ""}`,
+    "font-src 'self'",
+    // The page only ever talks to this loopback server, never to an arbitrary ws: host.
+    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'"
+  ].join("; ");
+}
+function isLoopbackRequest(request) {
+  try {
+    const hostname3 = new URL(`http://${request.headers.host}`).hostname;
+    return hostname3 === "127.0.0.1" || hostname3 === "localhost" || hostname3 === "[::1]";
+  } catch {
+    return false;
+  }
+}
+function isSameOrigin(request) {
+  const origin = request.headers.origin;
+  if (origin === void 0) {
+    return true;
+  }
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+function createAuthorizer(token) {
+  const tokenBytes = token ? Buffer.from(token, "utf8") : void 0;
+  function tokenMatches(candidate) {
+    if (typeof candidate !== "string" || !tokenBytes) {
+      return false;
+    }
+    const candidateBytes = Buffer.from(candidate, "utf8");
+    return candidateBytes.length === tokenBytes.length && timingSafeEqual(candidateBytes, tokenBytes);
+  }
+  return (request, url2) => {
+    if (!tokenBytes) {
+      return true;
+    }
+    return tokenMatches(request.headers["x-md-peek-token"]) || tokenMatches(url2.searchParams.get("token"));
+  };
+}
+
+// src/http/router.ts
+function createRouter(options) {
+  const route = (request, response) => {
+    if (!isLoopbackRequest(request)) {
+      return sendJson(response, 403, { ok: false, error: "loopback host required" });
+    }
+    const url2 = new URL(request.url || "/", `http://${request.headers.host}`);
+    if (request.method !== "GET") {
+      return sendJson(response, 404, { ok: false, error: "not found" });
+    }
+    if (url2.pathname === "/" || url2.pathname === "/asset") {
+      if (!options.authorize(request, url2)) {
+        return sendJson(response, 401, { ok: false, error: "unauthorized" });
+      }
+      return url2.pathname === "/" ? options.servePage(response) : options.serveAsset(response, url2);
+    }
+    if (!options.serveFile(response, url2.pathname)) {
+      return sendJson(response, 404, { ok: false, error: "not found" });
+    }
+  };
+  return (request, response) => {
+    try {
+      route(request, response);
+    } catch {
+      if (response.headersSent) {
+        response.destroy();
+      } else {
+        sendJson(response, 500, { ok: false, error: "internal error" });
+      }
+    }
+  };
+}
+
+// src/http/static-handler.ts
+import { readFileSync } from "node:fs";
+import { basename, extname as extname3, resolve as resolve2 } from "node:path";
+var publicFiles = /* @__PURE__ */ new Set(["/client.js", "/mermaid.js", "/style.css", "/katex.min.css"]);
+function createStaticHandler(options) {
+  function servePage(response) {
+    const html = readFileSync(resolve2(options.directory, "index.html"), "utf8").replace(
+      "__MD_PEEK_TOKEN__",
+      options.token || ""
+    );
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": options.contentSecurityPolicy
+    });
+    response.end(html);
+  }
+  function serveFile(response, pathname) {
+    if (publicFiles.has(pathname)) {
+      const path = resolve2(options.directory, pathname.slice(1));
+      streamFile(response, path, {
+        "content-type": contentTypes[extname3(path)] || "application/octet-stream",
+        "cache-control": "no-cache"
+      });
+      return true;
+    }
+    if (/^\/chunks\/[\w.-]+\.js$/.test(pathname)) {
+      streamFile(response, resolve2(options.directory, pathname.slice(1)), {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable"
+      });
+      return true;
+    }
+    if (pathname.startsWith("/fonts/")) {
+      streamFile(response, resolve2(options.directory, "fonts", basename(pathname)), {
+        "content-type": "font/woff2",
+        "cache-control": "public, max-age=31536000, immutable"
+      });
+      return true;
+    }
+    return false;
+  }
+  return { servePage, serveFile };
 }
 
 // node_modules/zod/v4/classic/external.js
@@ -14576,12 +14811,23 @@ var browserMessageSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({
     type: external_exports.literal("open_file"),
     href: external_exports.string().min(1)
+  }),
+  external_exports.object({
+    type: external_exports.literal("toggle_task"),
+    line: positiveLineNumber
+  }),
+  // Sent after each render so the editor can tell the preview is alive and how long it took.
+  external_exports.object({
+    type: external_exports.literal("rendered"),
+    latency_ms: external_exports.number().nonnegative().optional()
   })
 ]);
 var editorMessageSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({
     type: external_exports.literal("render"),
-    document: previewDocumentSchema
+    document: previewDocumentSchema,
+    // Epoch milliseconds when the editor sent this render, used to measure keystroke latency.
+    sent_at: external_exports.number().optional()
   }),
   external_exports.object({
     type: external_exports.literal("cursor"),
@@ -14617,6 +14863,9 @@ var previewConfigSchema = external_exports.object({
   allow_html: external_exports.boolean().optional(),
   sanitize: external_exports.boolean().optional(),
   remote_images: external_exports.boolean().optional(),
+  // 'document' (default) | 'git' | an absolute directory
+  asset_root: external_exports.string().optional(),
+  asset_extensions: external_exports.array(external_exports.string()).optional(),
   max_width: external_exports.number().positive().optional(),
   font: previewFontSchema.optional(),
   colors: previewColorsSchema.optional(),
@@ -14629,80 +14878,103 @@ function parseEditorMessage(value) {
   return editorMessageSchema.parse(value);
 }
 function parsePreviewConfig(serializedConfig) {
-  return previewConfigSchema.parse(JSON.parse(serializedConfig || "{}"));
+  return previewConfigSchema.parse(normalizeEmptyLuaTable(JSON.parse(serializedConfig || "{}")));
 }
 
-// src/security.ts
-import { timingSafeEqual } from "node:crypto";
-function buildContentSecurityPolicy(allowRemoteImages) {
-  return [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data:${allowRemoteImages ? " http: https:" : ""}`,
-    "font-src 'self'",
-    // The page only ever talks to this loopback server, never to an arbitrary ws: host.
-    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'"
-  ].join("; ");
+// src/ws/gateway.ts
+import { WebSocket, WebSocketServer } from "ws";
+function errorMessage(error51) {
+  return error51 instanceof Error ? error51.message : String(error51);
 }
-function isLoopbackRequest(request) {
-  try {
-    const hostname3 = new URL(`http://${request.headers.host}`).hostname;
-    return hostname3 === "127.0.0.1" || hostname3 === "localhost" || hostname3 === "[::1]";
-  } catch {
-    return false;
-  }
-}
-function isSameOrigin(request) {
-  const origin = request.headers.origin;
-  if (origin === void 0) {
-    return true;
-  }
-  try {
-    return new URL(origin).host === request.headers.host;
-  } catch {
-    return false;
-  }
-}
-function createAuthorizer(token) {
-  const tokenBytes = token ? Buffer.from(token, "utf8") : void 0;
-  function tokenMatches(candidate) {
-    if (typeof candidate !== "string" || !tokenBytes) {
-      return false;
+function createGateway(options) {
+  const websocketServer = new WebSocketServer({ noServer: true });
+  const browserSockets = /* @__PURE__ */ new Set();
+  websocketServer.on("connection", (browserSocket) => {
+    browserSockets.add(browserSocket);
+    browserSocket.send(JSON.stringify(options.getInit()));
+    browserSocket.on("message", (rawMessage) => {
+      try {
+        options.onMessage(parseBrowserMessage(JSON.parse(rawMessage.toString())));
+      } catch (error51) {
+        browserSocket.send(JSON.stringify({ type: "error", error: errorMessage(error51) }));
+      }
+    });
+    browserSocket.on("close", () => browserSockets.delete(browserSocket));
+  });
+  return {
+    /** Wire to the HTTP server's `upgrade` event. */
+    handleUpgrade(request, socket, head) {
+      const url2 = new URL(request.url || "/", `http://${request.headers.host}`);
+      if (!isLoopbackRequest(request) || !isSameOrigin(request) || url2.pathname !== "/ws" || !options.authorize(request, url2)) {
+        socket.destroy();
+        return;
+      }
+      websocketServer.handleUpgrade(request, socket, head, (browserSocket) => {
+        websocketServer.emit("connection", browserSocket);
+      });
+    },
+    broadcast(message) {
+      const payload = JSON.stringify(message);
+      for (const browserSocket of browserSockets) {
+        if (browserSocket.readyState === WebSocket.OPEN) {
+          browserSocket.send(payload);
+        }
+      }
+    },
+    close() {
+      for (const browserSocket of browserSockets) {
+        browserSocket.close();
+      }
+      websocketServer.close();
     }
-    const candidateBytes = Buffer.from(candidate, "utf8");
-    return candidateBytes.length === tokenBytes.length && timingSafeEqual(candidateBytes, tokenBytes);
-  }
-  return (request, url2) => {
-    if (!tokenBytes) {
-      return true;
-    }
-    return tokenMatches(request.headers["x-md-peek-token"]) || tokenMatches(url2.searchParams.get("token"));
   };
 }
 
-// src/server.ts
-var distributionDirectory = dirname2(fileURLToPath(import.meta.url));
-var initialDocument = { content: "", path: "", line: 1 };
+// src/core/links.ts
+import { dirname as dirname2, extname as extname4, resolve as resolve3 } from "node:path";
 var markdownExtensions = /* @__PURE__ */ new Set([".md", ".markdown", ".mdx"]);
-var contentTypes = {
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".woff2": "font/woff2",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".avif": "image/avif",
-  ".ico": "image/x-icon",
-  ".pdf": "application/pdf"
-};
+function decodeLinkPath(path) {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+function resolveMarkdownLink(documentPath, href) {
+  if (!documentPath) {
+    throw new Error("cannot open a link without an active Markdown document");
+  }
+  const pathWithoutAnchor = decodeLinkPath(href.split("#", 1)[0].split("?", 1)[0]);
+  if (!pathWithoutAnchor || /^[a-z][a-z\d+.-]*:/i.test(pathWithoutAnchor)) {
+    return void 0;
+  }
+  const target = resolve3(dirname2(documentPath), pathWithoutAnchor);
+  if (!markdownExtensions.has(extname4(target).toLowerCase())) {
+    throw new Error(`refusing to open non-Markdown link target: ${pathWithoutAnchor}`);
+  }
+  return target;
+}
+
+// src/core/main-module.ts
+import { realpathSync as realpathSync2 } from "node:fs";
+import { fileURLToPath } from "node:url";
+function isMainModule(meta3, entryScript = process.argv[1]) {
+  if (meta3.main !== void 0) {
+    return meta3.main;
+  }
+  if (!entryScript) {
+    return false;
+  }
+  try {
+    return realpathSync2(fileURLToPath(meta3.url)) === realpathSync2(entryScript);
+  } catch {
+    return false;
+  }
+}
+
+// src/core/daemon.ts
+var distributionDirectory = dirname3(fileURLToPath2(import.meta.url));
+var initialDocument = { content: "", path: "", line: 1 };
 function loadPreviewConfig() {
   try {
     return parsePreviewConfig(process.env.MD_PEEK_CONFIG);
@@ -14711,194 +14983,97 @@ function loadPreviewConfig() {
     return {};
   }
 }
-function decodeLinkPath(path) {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return path;
-  }
+function assetSandbox(config2) {
+  const root = config2.asset_root;
+  const extensions = config2.asset_extensions;
+  return {
+    allowGitRoot: root === "git",
+    customRoot: typeof root === "string" && root !== "git" && root !== "document" ? root : void 0,
+    allowedExtensions: Array.isArray(extensions) ? new Set(extensions.map((extension) => String(extension).toLowerCase())) : defaultAssetExtensions
+  };
 }
-function sendJson(response, status, value) {
-  response.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
-  });
-  response.end(JSON.stringify(value));
-}
-function streamFile(response, path, headers) {
-  response.writeHead(200, headers);
-  const stream = createReadStream(path);
-  stream.on("error", () => response.destroy());
-  stream.pipe(response);
-}
-function errorMessage(error51) {
+function errorMessage2(error51) {
   return error51 instanceof Error ? error51.message : String(error51);
 }
 function createServer(options = {}) {
   let currentDocument = { ...initialDocument };
-  const authenticationToken = process.env.MD_PEEK_TOKEN;
-  const isAuthorized = createAuthorizer(authenticationToken);
+  const token = process.env.MD_PEEK_TOKEN;
+  const authorize = createAuthorizer(token);
   const previewConfig = loadPreviewConfig();
-  const contentSecurityPolicy = buildContentSecurityPolicy(previewConfig.remote_images !== false);
-  const browserSockets = /* @__PURE__ */ new Set();
-  let editorLines;
-  function broadcastToBrowsers(message) {
-    const payload = JSON.stringify(message);
-    for (const browserSocket of browserSockets) {
-      if (browserSocket.readyState === WebSocket.OPEN) {
-        browserSocket.send(payload);
+  const emitToEditors = (message) => options.onEditorEvent?.(message);
+  const gateway = createGateway({
+    authorize,
+    getInit: () => ({ type: "init", config: previewConfig, document: currentDocument }),
+    onMessage(message) {
+      switch (message.type) {
+        case "jump":
+        case "toggle_task":
+          emitToEditors({ type: message.type, line: message.line });
+          break;
+        case "rendered":
+          emitToEditors({ type: "rendered", latency_ms: message.latency_ms });
+          break;
+        case "open_file": {
+          const path = resolveMarkdownLink(currentDocument.path, message.href);
+          if (path) {
+            emitToEditors({ type: "open_file", path });
+          }
+          break;
+        }
       }
     }
-  }
-  function emitToEditors(message) {
-    options.onEditorEvent?.(message);
-  }
+  });
   function applyEditorMessage(value) {
     const message = parseEditorMessage(value);
     if (message.type === "render") {
       currentDocument = message.document;
-      broadcastToBrowsers({ type: "render", document: currentDocument });
+      gateway.broadcast({ type: "render", document: currentDocument, sent_at: message.sent_at });
       return;
     }
     currentDocument.line = message.line;
-    broadcastToBrowsers({ type: "cursor", line: currentDocument.line });
+    gateway.broadcast({ type: "cursor", line: currentDocument.line });
   }
-  if (options.editorInput) {
-    editorLines = createInterface({ input: options.editorInput });
-    editorLines.on("line", (line) => {
-      if (line === "") {
-        return;
-      }
-      try {
-        applyEditorMessage(JSON.parse(line));
-      } catch (error51) {
-        emitToEditors({ type: "error", error: errorMessage(error51) });
-      }
-    });
-  }
-  const server = http.createServer(async (request, response) => {
-    if (!isLoopbackRequest(request)) {
-      return sendJson(response, 403, { ok: false, error: "loopback host required" });
+  const editorLines = options.editorInput ? createInterface({ input: options.editorInput }) : void 0;
+  editorLines?.on("line", (line) => {
+    if (line === "") {
+      return;
     }
-    const url2 = new URL(request.url || "/", `http://${request.headers.host}`);
-    if (request.method === "GET" && url2.pathname === "/") {
-      if (!isAuthorized(request, url2)) {
-        return sendJson(response, 401, { ok: false, error: "unauthorized" });
-      }
-      const html = readFileSync(resolve2(distributionDirectory, "index.html"), "utf8").replace(
-        "__MD_PEEK_TOKEN__",
-        authenticationToken || ""
-      );
-      response.writeHead(200, {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-        "content-security-policy": contentSecurityPolicy
-      });
-      return response.end(html);
+    try {
+      applyEditorMessage(JSON.parse(line));
+    } catch (error51) {
+      emitToEditors({ type: "error", error: errorMessage2(error51) });
     }
-    const publicFiles = ["/client.js", "/style.css", "/katex.min.css"];
-    if (request.method === "GET" && publicFiles.includes(url2.pathname)) {
-      const path = resolve2(distributionDirectory, url2.pathname.slice(1));
-      return streamFile(response, path, {
-        "content-type": contentTypes[extname(path)] || "application/octet-stream",
-        "cache-control": "no-cache"
-      });
-    }
-    if (request.method === "GET" && /^\/chunks\/[\w.-]+\.js$/.test(url2.pathname)) {
-      const path = resolve2(distributionDirectory, url2.pathname.slice(1));
-      return streamFile(response, path, {
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "public, max-age=31536000, immutable"
-      });
-    }
-    if (request.method === "GET" && url2.pathname.startsWith("/fonts/")) {
-      const path = resolve2(distributionDirectory, "fonts", basename(url2.pathname));
-      return streamFile(response, path, {
-        "content-type": "font/woff2",
-        "cache-control": "public, max-age=31536000, immutable"
-      });
-    }
-    if (request.method === "GET" && url2.pathname === "/asset") {
-      if (!isAuthorized(request, url2)) {
-        return sendJson(response, 401, { ok: false, error: "unauthorized" });
-      }
-      const requestedPath = url2.searchParams.get("path");
-      if (!requestedPath || requestedPath.includes("\0") || !currentDocument.path) {
-        return sendJson(response, 400, { ok: false, error: "invalid asset path" });
-      }
-      try {
-        const assetPath = resolveDocumentAssetPath(currentDocument.path, requestedPath);
-        if (!statSync(assetPath).isFile()) {
-          return sendJson(response, 404, { ok: false, error: "asset not found" });
-        }
-        return streamFile(response, assetPath, {
-          "content-type": contentTypes[extname(assetPath).toLowerCase()] || "application/octet-stream",
-          "cache-control": "no-cache"
-        });
-      } catch (error51) {
-        if (error51 instanceof AssetOutsideDocumentDirectoryError) {
-          return sendJson(response, 403, { ok: false, error: error51.message });
-        }
-        return sendJson(response, 404, { ok: false, error: "asset not found" });
-      }
-    }
-    return sendJson(response, 404, { ok: false, error: "not found" });
   });
-  const websocketServer = new WebSocketServer({ noServer: true });
-  server.on("upgrade", (request, socket, head) => {
-    const url2 = new URL(request.url || "/", `http://${request.headers.host}`);
-    if (!isLoopbackRequest(request) || !isSameOrigin(request) || url2.pathname !== "/ws" || !isAuthorized(request, url2)) {
-      return socket.destroy();
-    }
-    websocketServer.handleUpgrade(request, socket, head, (browserSocket) => {
-      websocketServer.emit("connection", browserSocket);
-    });
+  const staticFiles = createStaticHandler({
+    directory: options.staticDirectory ?? distributionDirectory,
+    token,
+    contentSecurityPolicy: buildContentSecurityPolicy(previewConfig.remote_images !== false)
   });
-  websocketServer.on("connection", (browserSocket) => {
-    browserSockets.add(browserSocket);
-    browserSocket.send(
-      JSON.stringify({ type: "init", config: previewConfig, document: currentDocument })
-    );
-    browserSocket.on("message", (rawMessage) => {
-      try {
-        const message = parseBrowserMessage(JSON.parse(rawMessage.toString()));
-        if (message.type === "jump") {
-          emitToEditors({ type: "jump", line: message.line });
-          return;
-        }
-        if (!currentDocument.path) {
-          throw new Error("cannot open a link without an active Markdown document");
-        }
-        const pathWithoutAnchor = decodeLinkPath(message.href.split("#", 1)[0].split("?", 1)[0]);
-        if (pathWithoutAnchor && !/^[a-z][a-z\d+.-]*:/i.test(pathWithoutAnchor)) {
-          const target = resolve2(dirname2(currentDocument.path), pathWithoutAnchor);
-          if (!markdownExtensions.has(extname(target).toLowerCase())) {
-            throw new Error(`refusing to open non-Markdown link target: ${pathWithoutAnchor}`);
-          }
-          emitToEditors({ type: "open_file", path: target });
-        }
-      } catch (error51) {
-        browserSocket.send(JSON.stringify({ type: "error", error: errorMessage(error51) }));
-      }
-    });
-    browserSocket.on("close", () => browserSockets.delete(browserSocket));
+  const serveAsset = createAssetHandler({
+    getDocumentPath: () => currentDocument.path,
+    sandbox: assetSandbox(previewConfig)
   });
+  const server = http.createServer(
+    createRouter({
+      authorize,
+      servePage: staticFiles.servePage,
+      serveFile: staticFiles.serveFile,
+      serveAsset
+    })
+  );
+  server.on("upgrade", gateway.handleUpgrade);
   server.on("close", () => {
     editorLines?.close();
-    for (const browserSocket of browserSockets) {
-      browserSocket.close();
-    }
-    websocketServer.close();
+    gateway.close();
   });
   return server;
 }
-
-// src/index.ts
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   const server = createServer({
     editorInput: process.stdin,
+    // Every stdout line is one JSON object, so Neovim never has to guess what a line means.
     onEditorEvent(message) {
-      process.stdout.write(`MD_PEEK_EVENT=${JSON.stringify(message)}
+      process.stdout.write(`${JSON.stringify(message)}
 `);
     }
   });
@@ -14906,7 +15081,8 @@ if (import.meta.main) {
   server.listen(Number(process.env.MD_PEEK_PORT || 0), "127.0.0.1", () => {
     const address = server.address();
     if (address && typeof address !== "string") {
-      process.stdout.write(`MD_PEEK_URL=http://127.0.0.1:${address.port}/
+      const ready = { type: "ready", port: address.port, url: `http://127.0.0.1:${address.port}/` };
+      process.stdout.write(`${JSON.stringify(ready)}
 `);
     }
   });

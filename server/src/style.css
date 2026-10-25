@@ -726,6 +726,16 @@ button {
   margin: 0 0.2em 0.25em -1.4em;
   vertical-align: middle;
   accent-color: var(--md-accent);
+  cursor: pointer;
+}
+
+/* Table rows cannot draw the left bar; tint the row instead. */
+tr[data-source-line].active-source {
+  border-radius: 0;
+  box-shadow: none;
+}
+tr[data-source-line].active-source::before {
+  display: none;
 }
 .footnotes {
   margin-top: 24px;

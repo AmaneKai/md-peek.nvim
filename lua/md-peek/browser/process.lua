@@ -25,41 +25,6 @@ local function stop_process(process, wait_for_completion)
   end
 end
 
-function M.command(executable, kind, url, profile_directory, window, position)
-  local command = { executable }
-  local arguments
-
-  if kind == "firefox" then
-    arguments = {
-      "--new-instance",
-      "--profile",
-      profile_directory,
-      "--window-size",
-      string.format("%d,%d", window.width, window.height),
-      "--new-window",
-      url,
-    }
-  else
-    arguments = {
-      "--app=" .. url,
-      string.format("--window-size=%d,%d", window.width, window.height),
-      string.format("--window-position=%d,%d", position.x, position.y),
-      "--user-data-dir=" .. profile_directory,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-extensions",
-      "--disable-sync",
-      "--disable-background-networking",
-      "--disable-component-update",
-    }
-  end
-
-  for _, argument in ipairs(arguments) do
-    table.insert(command, argument)
-  end
-  return command
-end
-
 --- `keep_profile` marks a profile that outlives the preview (reused to skip first-run setup).
 function M.start(command, tag, profile_directory, keep_profile)
   if active_process then

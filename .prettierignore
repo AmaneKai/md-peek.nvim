@@ -4,3 +4,7 @@ node_modules/
 server/package-lock.json
 package-lock.json
 
+
+# Fixtures and snapshots are compared byte for byte; formatting them would change what they test.
+server/src/client/fixtures/
+server/src/__snapshots__/

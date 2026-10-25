@@ -2,6 +2,7 @@ local M = { port = nil, url = nil, ready = false, error = nil, token = nil }
 
 local job_id
 local stopping = false
+local startup_timer
 
 local uv = vim.uv or vim.loop
 
@@ -15,6 +16,21 @@ local function token()
   end))
 end
 
+local function cancel_startup_timer()
+  if startup_timer then
+    startup_timer:stop()
+    startup_timer:close()
+    startup_timer = nil
+  end
+end
+
+--- Starts the Node server. Everything it reports is one JSON object per stdout line:
+--- `{"type":"ready",...}` once it is listening, then editor events (jump, open_file, ...).
+---
+--- opts: server_dir, preview, port (0 = any free port), startup_timeout_ms, and the callbacks
+---   on_ready(info)   the server is listening (`info.port`, `info.url`)
+---   on_event(event)  an event from the preview, already decoded
+---   on_error(text)   it failed to start, timed out, or exited unexpectedly
 function M.start(opts)
   if job_id then
     return true
@@ -29,14 +45,43 @@ function M.start(opts)
   end
 
   local env = {
-    MD_PEEK_PORT = "0",
+    MD_PEEK_PORT = tostring(opts.port or 0),
     MD_PEEK_TOKEN = M.token,
     MD_PEEK_CONFIG = vim.json.encode(opts.preview or {}),
   }
   stopping = false
   local started
   local partial = ""
-  started = vim.fn.jobstart({ "node", "dist/index.js" }, {
+
+  local function fail(message)
+    M.error = message
+    if opts.on_error then
+      opts.on_error(message)
+    end
+  end
+
+  local function handle_line(line)
+    local ok, message = pcall(vim.json.decode, line)
+    if not ok or type(message) ~= "table" then
+      return
+    end
+    if message.type == "ready" then
+      M.port = tonumber(message.port)
+      M.url = message.url
+      M.ready = M.port ~= nil and type(M.url) == "string"
+      if M.ready then
+        cancel_startup_timer()
+        if opts.on_ready then
+          opts.on_ready({ port = M.port, url = M.url })
+        end
+      end
+    elseif opts.on_event then
+      opts.on_event(message)
+    end
+  end
+
+  -- jobstart raises (instead of returning <= 0) for a missing cwd.
+  local launched, job = pcall(vim.fn.jobstart, { "node", "dist/index.js" }, {
     cwd = opts.server_dir,
     env = env,
     stdout_buffered = false,
@@ -45,15 +90,8 @@ function M.start(opts)
       data[1] = partial .. data[1]
       partial = table.remove(data)
       for _, line in ipairs(data) do
-        local url = line:match("^MD_PEEK_URL=(.+)$")
-        if url then
-          M.url = url
-          M.port = tonumber(url:match(":(%d+)/?$"))
-          M.ready = M.port ~= nil
-        end
-        local event = line:match("^MD_PEEK_EVENT=(.+)$")
-        if event and opts.on_event then
-          opts.on_event(event)
+        if line ~= "" then
+          handle_line(line)
         end
       end
     end,
@@ -71,23 +109,42 @@ function M.start(opts)
         return
       end
       local was_ready = M.ready
+      cancel_startup_timer()
       job_id, M.url, M.port, M.ready = nil, nil, nil, false
       if not stopping then
-        M.error = "preview server exited unexpectedly (exit " .. code .. ")"
-        if was_ready then
-          vim.schedule(function()
-            vim.notify("[md-peek] " .. M.error, vim.log.levels.ERROR)
-          end)
-        end
+        fail(
+          (
+            was_ready and "preview server exited unexpectedly"
+            or "preview server exited before it was ready"
+          )
+            .. " (exit "
+            .. code
+            .. ")"
+        )
       end
     end,
   })
+  started = launched and job or 0
   if started <= 0 then
-    M.error = "failed to start Node preview server"
+    M.error = launched and "failed to start Node preview server"
+      or ("failed to start Node preview server: " .. tostring(job))
     M.token = nil
     return false
   end
   job_id = started
+
+  local timeout = opts.startup_timeout_ms
+  if timeout and timeout > 0 then
+    startup_timer = uv.new_timer()
+    startup_timer:start(timeout, 0, function()
+      vim.schedule(function()
+        if job_id == started and not M.ready then
+          cancel_startup_timer()
+          fail("preview server startup timed out")
+        end
+      end)
+    end)
+  end
   return true
 end
 
@@ -104,6 +161,7 @@ end
 
 function M.stop()
   stopping = true
+  cancel_startup_timer()
   if job_id then
     vim.fn.jobstop(job_id)
   end
