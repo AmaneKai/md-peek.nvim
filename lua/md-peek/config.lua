@@ -1,14 +1,6 @@
-local function plugin_root()
-  local source = debug.getinfo(1, "S").source
-  local file = source:match("^@(.*)$") or source
-  return vim.fn.fnamemodify(file, ":h:h:h")
-end
-
 return {
-  server_dir = plugin_root() .. "/server",
   debounce_ms = 80,
   cursor_debounce_ms = 45,
-  startup_timeout_ms = 10000,
   auto_open = false,
   follow = true, -- keep the preview on whichever Markdown buffer you are in
   port = 0, -- 0 picks a free port; set one to forward it over SSH
@@ -36,8 +28,7 @@ return {
     theme = "dark",
     toc = true,
     toc_open = false,
-    math = true,
-    mermaid = true,
+    math = true, -- LaTeX math as native MathML: $..$, $$..$$, \\(..\\), \\[..\\]
     emoji = true,
     raw_toggle = true,
     code_copy = true,
@@ -49,12 +40,13 @@ return {
     allow_html = true,
     sanitize = true,
     remote_images = true, -- false blocks http(s) images via the CSP
-    -- Which local files a document may embed: "document" (its own folder and below), "git" (the
-    -- whole repository), or an absolute directory. Only media types are ever served.
+    -- Which local files a document may embed: "git" (the enclosing repository, or the document's
+    -- own folder when there is none), "document" (its own folder and below), or an absolute
+    -- directory. Only media types are ever served.
     -- A list allows several places at once, e.g. { "git", "~/Pictures", "$XDG_DATA_HOME/img" }:
     -- the document's folder (or the repo, with "git") plus each directory. `~` and `$VAR` are
     -- expanded and directories missing on this machine are skipped, so one config fits every machine.
-    asset_root = "document",
+    asset_root = "git",
     max_width = 920,
     font = {},
     colors = {},

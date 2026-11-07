@@ -1,15 +1,63 @@
 local M = {}
 local uv = vim.uv or vim.loop
 local server = require("md-peek.server")
-local client = require("md-peek.client")
 local browser = require("md-peek.browser")
 local overlay = require("md-peek.overlay")
 local events = require("md-peek.events")
 local diagnostics = require("md-peek.diagnostics")
+local highlight = require("md-peek.highlight")
 local session = require("md-peek.session")
 local is_markdown = require("md-peek.markdown").is_markdown
 
 M.config = require("md-peek.config")
+
+local timers = {}
+
+local function cancel_timer(key)
+  local old = timers[key]
+  if old then
+    if not old.closed then
+      old.timer:stop()
+      old.timer:close()
+    end
+    timers[key] = nil
+  end
+end
+
+--- Runs `callback` after `delay` ms unless the same `key` is debounced again first. This is a
+--- field of M so tests can run callbacks synchronously.
+function M.debounce(key, delay, callback)
+  cancel_timer(key)
+  local timer = uv.new_timer()
+  local pending = { timer = timer, closed = false }
+  timers[key] = pending
+  timer:start(delay, 0, function()
+    timer:stop()
+    timer:close()
+    pending.closed = true
+    vim.schedule(function()
+      if timers[key] ~= pending then
+        return
+      end
+      timers[key] = nil
+      callback()
+    end)
+  end)
+end
+
+local function cancel_debounced()
+  for _, key in ipairs(vim.tbl_keys(timers)) do
+    cancel_timer(key)
+  end
+end
+
+local function deliver(message)
+  if server.send(message) then
+    return true
+  end
+  vim.notify("[md-peek] preview server is unavailable", vim.log.levels.WARN)
+  return false
+end
 
 local aug = vim.api.nvim_create_augroup("MdPeek", { clear = true })
 
@@ -47,7 +95,7 @@ local function render(bufnr, immediate)
         return
       end
       session.set_last_sent({ content = doc.content, path = doc.path })
-      client.send({ type = "render", document = doc, sent_at = now_ms() })
+      deliver({ type = "render", document = doc, sent_at = now_ms() })
     end
   end
 
@@ -55,7 +103,7 @@ local function render(bufnr, immediate)
     send()
     return
   end
-  client.debounce("render", M.config.debounce_ms, send)
+  M.debounce("render", M.config.debounce_ms, send)
 end
 
 local function overlay_options()
@@ -80,13 +128,13 @@ local function sync_cursor(bufnr)
     return
   end
   overlay.update_status(bufnr, overlay_options())
-  client.debounce("cursor", M.config.cursor_debounce_ms, function()
+  M.debounce("cursor", M.config.cursor_debounce_ms, function()
     if not session.is_active(bufnr) or not vim.api.nvim_buf_is_valid(bufnr) then
       return
     end
     local win = vim.fn.bufwinid(bufnr)
     if win ~= -1 then
-      client.send({ type = "cursor", line = vim.api.nvim_win_get_cursor(win)[1] })
+      deliver({ type = "cursor", line = vim.api.nvim_win_get_cursor(win)[1] })
     end
   end)
 end
@@ -191,10 +239,26 @@ local function install_buffer_autocmds(bufnr)
   })
 end
 
+local theme_group = vim.api.nvim_create_augroup("MdPeekTheme", { clear = true })
+
+--- While a session runs, follow `:colorscheme` changes so the `nvim` theme stays current.
+local function watch_colorscheme()
+  vim.api.nvim_clear_autocmds({ group = theme_group })
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = theme_group,
+    callback = function()
+      if session.is_active() then
+        deliver({ type = "theme", css = highlight.nvim_theme_css() })
+      end
+    end,
+  })
+end
+
 --- Stops everything a session started, whatever state it was in.
 local function teardown(wait_for_browser)
   local bufnr = session.bufnr()
-  client.cancel_debounced()
+  vim.api.nvim_clear_autocmds({ group = theme_group })
+  cancel_debounced()
   overlay.close_all()
   if server.port then
     browser.close(
@@ -231,6 +295,7 @@ local function on_server_ready(bufnr, info)
   session.activate()
   trace_since_open("server ready")
   install_buffer_autocmds(bufnr)
+  watch_colorscheme()
   render(bufnr, true)
   audit(bufnr, true)
   overlay.update_status(bufnr, overlay_options())
@@ -286,9 +351,7 @@ function M.open()
   local id = session.begin(bufnr, uv.hrtime())
   events.first_render_seen = false
   local started = server.start({
-    server_dir = M.config.server_dir,
     preview = M.config.preview,
-    startup_timeout_ms = M.config.startup_timeout_ms,
     port = M.config.port,
     on_ready = function(info)
       if session.is_current(id) then
@@ -322,7 +385,7 @@ function M.follow(bufnr)
   end
 
   local previous = session.bufnr()
-  client.cancel_debounced()
+  cancel_debounced()
   overlay.close_status()
   diagnostics.clear(previous)
   vim.api.nvim_clear_autocmds({ group = aug, buffer = previous })

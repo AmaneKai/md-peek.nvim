@@ -11,9 +11,12 @@ Write Markdown in Neovim and read it in a fast browser preview that stays in syn
   - moving the Neovim cursor reveals and highlights the corresponding rendered block
   - clicking a rendered block moves the Neovim cursor to its source line
 - GitHub-flavored Markdown: tables, task lists, autolinks, strikethrough, and fenced code
-- Syntax highlighting with automatic language detection and one-click code copying
-- KaTeX math using `$...$`, `$$...$$`, `\(...\)`, and `\[...\]`
-- Mermaid diagrams from `mermaid` or `mmd` fenced blocks
+- Syntax highlighting for every language you have a Tree-sitter parser for, using your own parsers, plus one-click code copying
+- A `nvim` theme that takes its colors from your active colorscheme and follows `:colorscheme` changes live
+- LaTeX math (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`) rendered as native MathML by a small Lua translator: fractions, roots, scripts, big operators with limits, accents, matrices, fonts and Greek, with no JavaScript or font bundle. Prices such as `$5 or $10` are left alone. Needs a browser with MathML Core (Chrome 109+, Firefox, Safari)
+- `mermaid` and `mmd` fenced blocks are shown as source (diagram rendering needs a JavaScript library, which this plugin deliberately does not ship)
+- Images are revalidated with `ETag`, and an image edited on disk gets a new URL on the next render, so it refreshes without reloading the page
+- Nothing is compiled while no browser is connected
 - `:emoji:` shortcodes, footnotes, YAML front matter, and GitHub-style alerts
 - Generated, collapsible table of contents with stable heading anchors
 - Neovim-native live status HUD and floating Markdown outline
@@ -23,19 +26,19 @@ Write Markdown in Neovim and read it in a fast browser preview that stays in syn
 - Link diagnostics: missing local files and unknown `#anchors` show up as Neovim warnings
 - Relative links to other Markdown files open those files in Neovim
 - Raw/rendered view toggle
-- Remembered reader theme and preserved scroll position
-- Reading progress, print/save-to-PDF, and HTML export
-- Built-in `dark`, `github`, `tokyonight`, `gruvbox`, and `rose-pine` themes, plus color/font/CSS overrides
+- Reading-progress bar, preserved scroll position across edits, light/dark toggle (remembered per port, so set `port` to keep it between sessions), print/save-to-PDF, and HTML export
+- Raw HTML is reduced to a strict tag and attribute allowlist; `<details>` bodies are compiled as Markdown
+- Large media is streamed in chunks with HTTP `Range` support, so video seeking works and Neovim never blocks on a big file
+- Built-in `dark`, `github`, `tokyonight`, `gruvbox`, `rose-pine` and `nvim` themes, plus color/font/CSS overrides
 - Responsive layout for narrow popup windows
-- Offline, self-contained renderer after installation; no CDN scripts or styles
+- Zero dependencies and no build step: the server, Markdown compiler and viewer page are all Lua inside Neovim; no CDN scripts or styles
 - Token-protected loopback server, sanitized raw HTML, strict CSP, and no public network listener
 
 Browser-extension-only concerns such as remote-origin permissions, response `Content-Type` detection, page encoding overrides, and CSP rewriting do not apply: md-peek renders the current Neovim buffer directly.
 
 ## Requirements
 
-- Neovim 0.10+
-- Node.js 22.18+ (or 24.2+)
+- Neovim 0.10+ (nothing else: no Node.js, npm, or compiler)
 - Chrome, Brave, Edge, Chromium, or Firefox
 
 `browser = "auto"` prefers Chromium's chromeless app mode and falls back to Firefox. Firefox supports every rendering and synchronization feature, but Firefox does not expose a Chromium-style `--app` mode, so its dedicated preview retains normal browser chrome. Run `:checkhealth md-peek` to inspect the setup.
@@ -49,7 +52,6 @@ With lazy.nvim:
 ```lua
 {
   "AmaneKai/md-peek.nvim",
-  build = "cd server && npm install --omit=dev",
   ft = { "markdown", "mdx" },
   cmd = { "MdPeekOpen", "MdPeekClose", "MdPeekToggle", "MdPeekRefresh", "MdPeekOutline", "MdPeekUrl" },
   config = function()
@@ -63,14 +65,13 @@ With packer.nvim:
 ```lua
 use({
   "AmaneKai/md-peek.nvim",
-  run = "cd server && npm install --omit=dev",
   config = function()
     require("md-peek").setup()
   end,
 })
 ```
 
-For a manual install, run `npm install --omit=dev` inside the plugin's `server/` directory, then call:
+There is nothing to build. For a manual install, put the plugin on your `runtimepath` and call:
 
 ```lua
 require("md-peek").setup()
@@ -83,26 +84,20 @@ lua/md-peek/
   init.lua        setup and commands; wires the session to buffers, server and browser
   session.lua     the preview lifecycle as a state machine (idle, starting, active, stopping, error)
   config.lua      default options
-  server.lua      owns the Node job: starts it, waits for its `ready` line, relays events
+  server.lua      in-process vim.uv HTTP + Server-Sent Events server on 127.0.0.1; serves the page, assets and events
+  compiler.lua    GitHub-flavoured Markdown to HTML in pure Lua, with data-source-line on every block
+  highlight.lua   Tree-sitter code highlighting and the `nvim` colorscheme theme
+  page.lua        the single self-contained viewer page: CSS plus ~70 lines of inline JavaScript
   events.lua      reacts to events from the preview (jump, open_file, toggle_task, rendered)
-  client.lua      send + debounce helpers
+  math.lua        LaTeX to MathML translator
   diagnostics.lua missing links/images and unknown #anchors as vim.diagnostic
-  markdown.lua    is this buffer Markdown?
+  markdown.lua    is this buffer Markdown? plus the one scanner (front matter, fences, headings) that the outline and the link diagnostics share
   browser/        init.lua (open/close), detect.lua (find installs), profile.lua, process.lua
     drivers/      base.lua (the contract), chromium.lua, firefox.lua
     windows/      per-OS window control: osascript, xdotool, wmctrl, powershell
   overlay/        headings.lua, status.lua (HUD), outline.lua, ui.lua
   health.lua      :checkhealth md-peek
-server/src/
-  core/           daemon.ts (entry; wires everything), security.ts, links.ts
-  http/           router.ts, static-handler.ts, asset-handler.ts, asset-path.ts (the sandbox)
-  ws/             gateway.ts (browser connections)
-  protocol.ts     zod schemas for every message
-  client/         the browser app, bundled to dist/client.js
-    store.ts      state + actions (a pure reducer; modules subscribe to changes)
-    render/       the pipeline: parse -> sanitize -> patch -> enrich (math, diagrams, links)
-server/dist/      committed build output; regenerate with `make build`
-tests/            headless-Neovim smoke tests
+tests/            headless-Neovim smoke tests (module units plus a real TCP server)
 ```
 
 ## Usage
@@ -156,12 +151,8 @@ Every field is optional; these are the defaults:
 
 ```lua
 require("md-peek").setup({
-  -- Discovered from the plugin's install path. Usually leave this nil.
-  server_dir = nil,
-
   debounce_ms = 80,
   cursor_debounce_ms = 45,
-  startup_timeout_ms = 10000,
   auto_open = false,
   follow = true, -- keep the preview on whichever Markdown buffer you are in
   port = 0, -- 0 picks a free port; set one to forward it over SSH
@@ -190,11 +181,10 @@ require("md-peek").setup({
   },
 
   preview = {
-    theme = "dark", -- dark, github, tokyonight, gruvbox, rose-pine
+    theme = "dark", -- dark, github, tokyonight, gruvbox, rose-pine, nvim (your colorscheme)
     toc = true,
     toc_open = false, -- initial sidebar state; the toolbar button still toggles it
-    math = true,
-    mermaid = true,
+    math = true, -- LaTeX math as native MathML
     emoji = true,
     raw_toggle = true,
     code_copy = true,
@@ -208,9 +198,10 @@ require("md-peek").setup({
     allow_html = true,
     sanitize = true,
     remote_images = true, -- false blocks http(s) images through the CSP
-    -- Local files a document may embed: "document" (its folder and below), "git" (the whole
-    -- repository), or an absolute directory path. Only images, audio, video and PDFs are served.
-    asset_root = "document",
+    -- Local files a document may embed: "git" (the enclosing repository, or the document's own
+    -- folder when it is not in one), "document" (its folder and below), or an absolute directory
+    -- path. Only images, audio, video and PDFs are served.
+    asset_root = "git",
 
     max_width = 920,
     font = {
@@ -237,49 +228,39 @@ Set a mapping to `false` or an empty string to disable it. Configuration that ch
 
 ## Markdown extras
 
-Mermaid:
-
-```mermaid
-flowchart LR
-  Neovim --> Preview
-```
-
-Math:
-
-Euler's identity is $e^{i\pi} + 1 = 0$.
-
-$$
-\int_0^1 x^2\,dx = \frac{1}{3}
-$$
-
 GitHub-style alerts:
 
 > [!NOTE]
 > The preview follows your cursor.
 
+Math:
+
+Euler's identity is $e^{i\pi} + 1 = 0$, and
+
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+$$
+
+Mermaid blocks appear as plain source.
+
 ## How it works
 
-Opening a preview starts one Node process bound to `127.0.0.1` on an operating-system-assigned port. Neovim and that attached child process exchange newline-delimited JSON through persistent standard input and output streams, so live updates do not start per-edit processes or make local HTTP requests. The server announces itself with a single `{"type":"ready",...}` line; Neovim reacts to it directly instead of polling, and treats an early exit or a timeout as a startup failure. The browser receives updates over a WebSocket, and browser clicks return through the same Node job channel.
+Opening a preview starts a small HTTP server inside Neovim itself (`vim.uv`, bound to `127.0.0.1` on an operating-system-assigned port unless you set `port`). Nothing runs as a separate process. The browser loads one self-contained page and then listens on a Server-Sent Events stream (`/events`); every render is compiled by `compiler.lua` in Neovim and pushed down that stream, and browser clicks come back as small `POST /act` requests that become the same events Neovim has always handled (`jump`, `toggle_task`, `open_file`).
 
-Each render runs through a small pipeline in the browser: the Markdown is parsed (front matter first, with line endings normalised so source lines stay exact), the HTML is sanitized, and it is then **patched** into the page. Blocks that did not change keep their DOM nodes, so rendered diagrams, math, zoom and selection survive an edit; only new or changed blocks are enriched with math, diagrams and link handling.
+The compiler turns Markdown into HTML with a `data-source-line` on each block, list item and table row, which is what makes cursor and click synchronisation exact. Fenced code is highlighted with Neovim's own Tree-sitter parsers (`vim.treesitter`), so any language you can highlight in Neovim is highlighted in the preview. In the browser each update is **patched** into the page: blocks that did not change keep their DOM nodes, so scroll position and selection survive an edit.
 
-The session token is freshly generated for each preview and required by the page and the asset endpoint. Raw HTML is sanitized by default, and the page uses a restrictive Content Security Policy. Relative local assets are served only through the token-authenticated preview session, and only if they are images, audio, video or PDFs inside the allowed root. By default that root is the Markdown document's own real directory; `preview.asset_root = "git"` widens it to the enclosing repository, or to a directory you name. A list such as `{ "git", "~/Pictures", "$XDG_DATA_HOME/img" }` allows several places at once (the document's folder, or the repository with `"git"`, plus each directory); `~` and `$VAR` are expanded and directories that do not exist on a machine are skipped, so the same dotfiles work everywhere. Parent traversal and symlinks that resolve outside the root are rejected, and the file type is judged by the real file, so a `.png` link to a secret is refused.
-
-The browser renderer and its math fonts are committed in `server/dist/`; runtime rendering never fetches libraries from a CDN. KaTeX is loaded from a local chunk, and Mermaid from a single local file, only when the active document needs them.
+The session token is freshly generated for each preview and required by the page and the asset endpoint. Raw HTML is sanitized by default, and the page uses a restrictive Content Security Policy. Relative local assets are served only through the token-authenticated preview session, and only if they are images, audio, video or PDFs inside the allowed root. By default that root is the enclosing git repository (so `../screenshots/a.png` works), or the document's own directory when it is not in one; `preview.asset_root = "document"` narrows it to the document's folder, and an absolute path names a directory instead. A list such as `{ "git", "~/Pictures", "$XDG_DATA_HOME/img" }` allows several places at once (the repository, or the document's folder, plus each directory); `~` and `$VAR` are expanded and directories that do not exist on a machine are skipped, so the same dotfiles work everywhere. Parent traversal and symlinks that resolve outside the root are rejected, and the file type is judged by the real file, so a `.png` link to a secret is refused.
 
 ## Development
 
 ```sh
-make build       # rebuild server/dist
-make check       # formatting, lint, types, build, then every test
-make testlua     # headless Neovim smoke test
-make testserver  # server, protocol, store/pipeline and real-browser tests
-make checkbuild  # fail if the committed server/dist does not match the source
+make format      # stylua
+make check       # stylua --check, then the smoke tests
+make testlua     # headless Neovim smoke tests (unit tests plus a real loopback server)
+                 # also prints a 5,000-line compile benchmark and fails if a one-line edit takes 15 ms or more
 ```
 
-The real-browser tests (Chrome click-to-source and in-place patching, a committed DOM snapshot, a Firefox load test) use whichever of Chrome and Firefox is installed and skip themselves otherwise. Set `MD_PEEK_CHROME` or `MD_PEEK_FIREFOX` to point at a specific binary. They run against `server/dist`, so build first.
-
-CI runs the Lua launch and cleanup smoke tests on Ubuntu, macOS, and Windows. The server and browser-client suite runs on Ubuntu.
+The smoke tests cover the highlighter, the Markdown compiler (including XSS sanitisation), and the HTTP/SSE server over real sockets: token checks, event streaming, the `/act` validation and the `/asset` sandbox. CI runs them on Ubuntu, macOS, and Windows.
 
 ## License
 

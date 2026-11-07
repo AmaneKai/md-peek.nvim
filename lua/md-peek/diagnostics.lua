@@ -1,3 +1,5 @@
+local compiler = require("md-peek.compiler")
+local markdown = require("md-peek.markdown")
 local headings = require("md-peek.overlay.headings")
 
 local M = {}
@@ -11,10 +13,10 @@ local function decode(path)
   end))
 end
 
---- GitHub-style heading slug, matching the preview's anchors (see client/markdown.ts).
+--- GitHub-style heading slug. It is the compiler's own, so it always matches the preview's anchors.
 local function slug(title)
-  local text = vim.fn.tolower(title):gsub("<[^>]*>", ""):gsub("[^%w%s%-\128-\255]", "")
-  return (vim.trim(text):gsub("%s+", "-"))
+  local plugin = package.loaded["md-peek"]
+  return compiler.slug(title, plugin and plugin.config and plugin.config.preview or {})
 end
 
 local function heading_slugs(bufnr)
@@ -54,29 +56,10 @@ function M.compute(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local slugs
   local diagnostics = {}
-  local fence_char, fence_length
-  local in_frontmatter = lines[1] ~= nil and lines[1]:match("^%-%-%-%s*$") ~= nil
+  local scan = markdown.scan(lines)
 
   for index, line in ipairs(lines) do
-    local skip = false
-    if in_frontmatter then
-      skip = true
-      if index > 1 and line:match("^%-%-%-%s*$") then
-        in_frontmatter = false
-      end
-    end
-    local marker = line:match("^%s*(`+)") or line:match("^%s*(~+)")
-    if not skip and marker and #marker >= 3 then
-      local char = marker:sub(1, 1)
-      if not fence_char then
-        fence_char, fence_length = char, #marker
-      elseif char == fence_char and #marker >= fence_length then
-        fence_char, fence_length = nil, nil
-      end
-      skip = true
-    end
-
-    if not skip and not fence_char then
+    if not scan.skip[index] then
       for _, item in ipairs(targets(line)) do
         local target = item.target
         local report

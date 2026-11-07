@@ -1,9 +1,5 @@
 local M = {}
 
-local function executable(name)
-  return vim.fn.executable(name) == 1
-end
-
 function M.check()
   vim.health.start("md-peek")
   if vim.fn.has("nvim-0.10") == 1 then
@@ -11,29 +7,40 @@ function M.check()
   else
     vim.health.error("Neovim 0.10 or newer is required")
   end
-  for _, name in ipairs({ "node" }) do
-    if executable(name) then
-      vim.health.ok(name .. " found")
+  local uv = vim.uv or vim.loop
+  if uv and uv.new_tcp then
+    local probe = uv.new_tcp()
+    local bound = probe:bind("127.0.0.1", 0)
+    probe:close()
+    if bound then
+      vim.health.ok("vim.uv can bind a loopback TCP server")
     else
-      vim.health.error(name .. " not found on PATH")
+      vim.health.error("vim.uv could not bind 127.0.0.1; the preview server cannot start")
     end
-  end
-  local dir = require("md-peek").config.server_dir
-  if vim.fn.filereadable(dir .. "/dist/index.js") == 1 then
-    vim.health.ok("preview bundle found")
   else
-    vim.health.error(
-      "preview bundle missing",
-      { "Run `cd " .. dir .. " && npm install && npm run build`" }
-    )
+    vim.health.error("vim.uv TCP support is missing")
   end
-  if vim.fn.isdirectory(dir .. "/node_modules/ws") == 1 then
-    vim.health.ok("server dependencies installed")
+  if vim.treesitter and vim.treesitter.get_string_parser then
+    local available = {}
+    for _, lang in ipairs({ "lua", "vim", "markdown", "c" }) do
+      if pcall(vim.treesitter.language.add, lang) then
+        table.insert(available, lang)
+      end
+    end
+    if #available > 0 then
+      vim.health.ok(
+        "Tree-sitter parsers for code blocks: "
+          .. table.concat(available, ", ")
+          .. " (+ any you install)"
+      )
+    else
+      vim.health.warn(
+        "no Tree-sitter parsers found; code blocks will not be highlighted",
+        { "Install parsers (for example with nvim-treesitter) for the languages you use" }
+      )
+    end
   else
-    vim.health.error(
-      "server dependencies missing",
-      { "Run the plugin manager build step, or `cd " .. dir .. " && npm install`" }
-    )
+    vim.health.error("vim.treesitter is unavailable")
   end
   local browser_preference = require("md-peek").config.browser
   local detect = require("md-peek.browser.detect")

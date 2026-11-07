@@ -1,3 +1,9 @@
+--- The single self-contained viewer page: markup, stylesheet and a small inline script.
+local highlight = require("md-peek.highlight")
+
+local M = {}
+
+local STYLE = [==[
 :root {
   color-scheme: dark;
   --md-bg: #17191d;
@@ -30,7 +36,6 @@
   --toolbar-height: 50px;
   --toc-width: 300px;
 }
-
 :root[data-theme='github'],
 :root[data-theme='light'] {
   color-scheme: light;
@@ -55,7 +60,6 @@
   --hl-function: #8250df;
   --hl-meta: #0550ae;
 }
-
 :root[data-theme='tokyonight'] {
   --md-bg: #1a1b26;
   --md-fg: #c0caf5;
@@ -78,7 +82,6 @@
   --hl-function: #7aa2f7;
   --hl-meta: #89ddff;
 }
-
 :root[data-theme='gruvbox'] {
   --md-bg: #282828;
   --md-fg: #ebdbb2;
@@ -101,7 +104,6 @@
   --hl-function: #fabd2f;
   --hl-meta: #8ec07c;
 }
-
 :root[data-theme='rose-pine'] {
   --md-bg: #191724;
   --md-fg: #e0def4;
@@ -124,7 +126,7 @@
   --hl-function: #ebbcba;
   --hl-meta: #c4a7e7;
 }
-
+/*NVIM_THEME*/
 /* Theme-independent overrides from the toolbar's light/dark toggle. */
 :root[data-scheme='light'] {
   color-scheme: light;
@@ -149,7 +151,6 @@
   --hl-function: #8250df;
   --hl-meta: #0550ae;
 }
-
 :root[data-scheme='dark'] {
   color-scheme: dark;
   --md-bg: #17191d;
@@ -173,7 +174,6 @@
   --hl-function: #ffcb6b;
   --hl-meta: #89ddff;
 }
-
 /* GitHub's own dark palette when the github theme is toggled to dark. */
 :root[data-theme='github'][data-scheme='dark'] {
   --md-bg: #0d1117;
@@ -197,7 +197,6 @@
   --hl-function: #d2a8ff;
   --hl-meta: #79c0ff;
 }
-
 * {
   box-sizing: border-box;
 }
@@ -217,7 +216,6 @@ body {
 button {
   font: inherit;
 }
-
 #progress {
   position: fixed;
   z-index: 100;
@@ -227,7 +225,6 @@ button {
   height: 2px;
   background: var(--md-accent);
 }
-
 #toolbar {
   position: fixed;
   z-index: 90;
@@ -281,7 +278,6 @@ button {
   align-items: center;
   gap: 3px;
 }
-
 #toc {
   position: fixed;
   z-index: 70;
@@ -407,7 +403,6 @@ button {
   cursor: col-resize !important;
   user-select: none !important;
 }
-
 #viewport {
   max-width: calc(var(--content-width) + 152px);
   min-height: 100vh;
@@ -419,7 +414,6 @@ button {
   margin-left: auto;
   margin-right: auto;
 }
-
 /* Markdown body: spacing, type scale, and components follow github-markdown-css. */
 .markdown-body {
   max-width: var(--content-width);
@@ -432,19 +426,6 @@ button {
 }
 .markdown-body > :last-child {
   margin-bottom: 0 !important;
-}
-.markdown-body p,
-.markdown-body blockquote,
-.markdown-body ul,
-.markdown-body ol,
-.markdown-body dl,
-.markdown-body table,
-.markdown-body pre,
-.markdown-body details,
-.markdown-body .code-block,
-.markdown-body .mermaid {
-  margin-top: 0;
-  margin-bottom: 16px;
 }
 .markdown-body h1,
 .markdown-body h2,
@@ -580,7 +561,6 @@ button {
   background: color-mix(in srgb, var(--md-muted) 20%, transparent);
   white-space: break-spaces;
 }
-
 .markdown-body table {
   display: block;
   width: max-content;
@@ -605,7 +585,6 @@ button {
 .markdown-body tr:nth-child(2n) {
   background: var(--md-surface);
 }
-
 .code-block {
   position: relative;
   border-radius: 6px;
@@ -671,51 +650,6 @@ button {
   fill: currentColor;
   vertical-align: text-bottom;
 }
-
-.hljs {
-  color: var(--md-fg);
-  background: transparent;
-}
-.hljs-comment,
-.hljs-quote {
-  color: var(--md-muted);
-}
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal,
-.hljs-section {
-  color: var(--hl-keyword);
-}
-.hljs-string,
-.hljs-regexp {
-  color: var(--hl-string);
-}
-.hljs-title,
-.hljs-name,
-.hljs-type,
-.hljs-attribute {
-  color: var(--hl-title);
-}
-.hljs-number,
-.hljs-symbol,
-.hljs-bullet {
-  color: var(--hl-number);
-}
-.hljs-built_in,
-.hljs-builtin-name,
-.hljs-variable,
-.hljs-template-variable {
-  color: var(--hl-variable);
-}
-.hljs-function .hljs-title,
-.hljs-title.function_ {
-  color: var(--hl-function);
-}
-.hljs-meta,
-.hljs-attr {
-  color: var(--hl-meta);
-}
-
 .task-list-item {
   list-style-type: none;
 }
@@ -728,7 +662,6 @@ button {
   accent-color: var(--md-accent);
   cursor: pointer;
 }
-
 /* Table rows cannot draw the left bar; tint the row instead. */
 tr[data-source-line].active-source {
   border-radius: 0;
@@ -795,24 +728,6 @@ tr[data-source-line].active-source::before {
 .markdown-body .alert-caution {
   --alert-color: var(--md-danger);
 }
-.mermaid {
-  padding: 16px;
-  overflow: auto;
-  text-align: center;
-  cursor: zoom-in;
-  border-radius: 6px;
-  background: var(--md-code);
-  transition: box-shadow 0.15s;
-}
-.mermaid:hover {
-  box-shadow: inset 0 0 0 1px var(--md-border);
-}
-.katex-display {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 5px;
-}
-
 /* Source-line highlight: a tinted halo plus a left bar, drawn outside the block so text never shifts. */
 [data-source-line] {
   --active-tint: color-mix(in srgb, var(--md-accent) 8%, transparent);
@@ -836,7 +751,6 @@ tr[data-source-line].active-source::before {
   width: 3px;
   background: var(--md-accent);
 }
-
 #source {
   max-width: var(--content-width);
   min-height: 65vh;
@@ -856,7 +770,6 @@ tr[data-source-line].active-source::before {
   color: var(--md-muted);
   text-align: center;
 }
-
 #lightbox {
   width: 100vw;
   max-width: none;
@@ -888,88 +801,6 @@ tr[data-source-line].active-source::before {
   cursor: pointer;
   font-size: 28px;
 }
-
-#diagram-viewer {
-  width: 100vw;
-  max-width: none;
-  height: 100vh;
-  max-height: none;
-  padding: 0;
-  border: 0;
-  background: rgba(0, 0, 0, 0.92);
-}
-#diagram-viewer[open] {
-  display: flex;
-  flex-direction: column;
-}
-#diagram-viewer::backdrop {
-  background: rgba(0, 0, 0, 0.92);
-}
-#diagram-toolbar {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-}
-#diagram-toolbar button {
-  height: 30px;
-  padding: 0 10px;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-}
-.diagram-icon-btn {
-  width: 30px;
-  padding: 0;
-  font-size: 16px;
-}
-#diagram-toolbar button:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-#diagram-toolbar button:focus {
-  outline: none;
-}
-#diagram-toolbar button:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.6);
-  outline-offset: 2px;
-}
-#diagram-zoom-level {
-  min-width: 46px;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 13px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-#diagram-close {
-  margin-left: auto;
-  font-size: 20px;
-}
-#diagram-viewport {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-  outline: none;
-}
-#diagram-viewport.panning {
-  cursor: grabbing;
-}
-#diagram-canvas {
-  transform-origin: center center;
-  user-select: none;
-  will-change: transform;
-}
-#diagram-canvas svg {
-  display: block;
-}
 #toast {
   position: fixed;
   z-index: 120;
@@ -991,7 +822,6 @@ tr[data-source-line].active-source::before {
   opacity: 1;
   transform: translateY(0);
 }
-
 @media (max-width: 1100px) and (min-width: 761px) {
   #viewport {
     max-width: calc(var(--content-width) + 76px);
@@ -999,7 +829,6 @@ tr[data-source-line].active-source::before {
     padding-right: 38px;
   }
 }
-
 @media (max-width: 760px) {
   #toc {
     width: min(84vw, 330px);
@@ -1034,7 +863,6 @@ tr[data-source-line].active-source::before {
     font-size: 14px;
   }
 }
-
 @media print {
   :root {
     /* Theme selectors and user variables outrank this block without !important. */
@@ -1148,3 +976,306 @@ tr[data-source-line].active-source::before {
     text-decoration: underline;
   }
 }
+.hljs {
+  color: var(--md-fg);
+  background: transparent;
+}
+.hl-comment {
+  color: var(--hl-comment, var(--md-muted));
+  font-style: italic;
+}
+.hl-keyword {
+  color: var(--hl-keyword);
+}
+.hl-string {
+  color: var(--hl-string);
+}
+.hl-number {
+  color: var(--hl-number);
+}
+.hl-function {
+  color: var(--hl-function);
+}
+.hl-type {
+  color: var(--hl-type, var(--hl-title));
+}
+.hl-title {
+  color: var(--hl-title);
+}
+.hl-constant {
+  color: var(--hl-constant, var(--hl-number));
+}
+.hl-operator {
+  color: var(--hl-operator, var(--hl-meta));
+}
+.hl-property {
+  color: var(--hl-property, var(--hl-variable));
+}
+.hl-builtin {
+  color: var(--hl-builtin, var(--hl-variable));
+}
+.hl-punctuation {
+  color: var(--hl-punctuation, var(--md-muted));
+}
+.hl-tag {
+  color: var(--hl-tag, var(--hl-keyword));
+}
+pre.mermaid {
+  padding: 14px 16px;
+  overflow: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background: var(--md-code);
+  font-family: var(--md-font-mono);
+  font-size: 85%;
+}
+.math-display {
+  margin: 1em 0;
+  overflow-x: auto;
+  text-align: center;
+}
+math {
+  font-size: 1.12em;
+}
+.math-error {
+  color: var(--md-danger);
+}
+.footnote-ref a {
+  text-decoration: none;
+}
+]==]
+
+local BODY = [==[
+<div id="progress"></div>
+<header id="toolbar">
+  <button id="toc-toggle" title="Toggle table of contents" aria-label="Toggle table of contents" aria-expanded="false">☰</button>
+  <div id="title-wrap"><strong id="document-title">Markdown</strong><span id="status">Connecting…</span></div>
+  <div class="toolbar-actions">
+    <button id="raw-toggle" title="Toggle rendered/source view">&lt;/&gt;</button>
+    <button id="theme-toggle" title="Toggle light/dark theme">◐</button>
+    <button id="export" title="Download rendered HTML">↓ HTML</button>
+    <button id="print" title="Print or save as PDF">Print</button>
+  </div>
+</header>
+<aside id="toc"><div id="toc-heading">On this page</div><div id="toc-content"></div></aside>
+<div id="toc-resizer" aria-hidden="true"></div>
+<main id="viewport">
+  <article id="document" class="markdown-body"></article>
+  <pre id="source" hidden><code></code></pre>
+  <div id="empty">Start writing Markdown in Neovim.</div>
+</main>
+<dialog id="lightbox"><button aria-label="Close">×</button><img alt="Expanded preview"></dialog>
+<div id="toast" role="status"></div>]==]
+
+local SCRIPT = [==[
+const C = __CONFIG__, $ = (s) => document.querySelector(s), doc = $('#document'), root = document.documentElement;
+const act = (body) => fetch('/act?token=' + C.token, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+const toast = (text) => { const t = $('#toast'); t.textContent = text; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1400); };
+let raw = '', tocLinks = [], lastScrolledLine = 0;
+const setToc = (open) => { document.body.classList.toggle('toc-closed', !open); $('#toc-toggle').setAttribute('aria-expanded', open); };
+setToc(C.toc && C.toc_open);
+if (!C.toc) { $('#toc-toggle').hidden = true; $('#toc').hidden = true; }
+if (!C.raw_toggle) $('#raw-toggle').hidden = true;
+const hashed = (el) => el._h || (el._h = el.outerHTML);
+function patch(html) {
+  const next = document.createElement('div'); next.innerHTML = html;
+  const old = [...doc.children], fresh = [...next.children];
+  let a = 0, b = 0;
+  while (a < old.length && a < fresh.length && hashed(old[a]) === fresh[a].outerHTML) a++;
+  while (b < old.length - a && b < fresh.length - a && hashed(old[old.length - 1 - b]) === fresh[fresh.length - 1 - b].outerHTML) b++;
+  old.slice(a, old.length - b).forEach((el) => el.remove());
+  const anchor = old[old.length - b] || null;
+  fresh.slice(a, fresh.length - b).forEach((el) => { el._h = el.outerHTML; doc.insertBefore(el, anchor); });
+  $('#empty').hidden = doc.children.length > 0;
+}
+function buildToc(toc) {
+  const box = $('#toc-content'); box.textContent = ''; tocLinks = [];
+  Object.values(toc || {}).forEach((h) => {
+    const a = document.createElement('a'); a.href = '#' + h.id; a.textContent = h.title; a.className = 'toc-h' + h.level; a.dataset.line = h.line;
+    a.onclick = (e) => { e.preventDefault(); const t = document.getElementById(h.id); if (t) t.scrollIntoView({ block: 'start' }); };
+    box.appendChild(a); tocLinks.push(a);
+  });
+  if (!tocLinks.length) box.innerHTML = '<div class="toc-empty">No headings</div>';
+}
+function sync(line, scroll) {
+  let best = null, bestLine = 0;
+  doc.querySelectorAll('[data-source-line]').forEach((el) => { const n = +el.dataset.sourceLine; if (n <= line && n >= bestLine) { best = el; bestLine = n; } });
+  doc.querySelectorAll('.active-source').forEach((el) => el.classList.remove('active-source'));
+  if (best) { best.classList.add('active-source'); if (scroll && C.scroll_sync) best.scrollIntoView({ block: 'nearest' }); }
+  let current = null; tocLinks.forEach((a) => { if (+a.dataset.line <= line) current = a; a.classList.remove('active'); });
+  if (current) current.classList.add('active');
+}
+function onRender(m) {
+  document.title = m.title + ' — md-peek:' + location.port;
+  $('#document-title').textContent = m.title; $('#status').textContent = m.path || '';
+  raw = m.raw || ''; $('#source code').textContent = raw;
+  patch(m.html); buildToc(m.toc);
+  if (m.line) { const move = !(C.preserve_scroll && m.line === lastScrolledLine); sync(m.line, move); if (move) lastScrolledLine = m.line; }
+  if (m.sent_at) act({ type: 'rendered', latency_ms: Math.max(0, Date.now() - m.sent_at) });
+}
+const es = new EventSource('/events?token=' + C.token);
+es.onopen = () => { $('#status').textContent = ''; };
+es.onerror = () => { $('#status').textContent = 'Disconnected'; };
+es.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'render') onRender(m); else if (m.type === 'theme') $('#nvim-theme').textContent = m.css; else if (m.type === 'cursor') { lastScrolledLine = m.line; sync(m.line, true); } };
+doc.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.closest('.copy-code')) {
+    const b = t.closest('.copy-code'), code = b.closest('.code-block').querySelector('code').textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).catch(() => { const x = document.createElement('textarea'); x.value = code; document.body.appendChild(x); x.select(); document.execCommand('copy'); x.remove(); });
+    b.textContent = 'Copied'; b.classList.add('copied'); setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('copied'); }, 1200); return;
+  }
+  if (t.matches('.task-list-item-checkbox')) { act({ type: 'toggle_task', line: +t.dataset.line }); return; }
+  const md = t.closest('a[data-md-link]');
+  if (md) { e.preventDefault(); act({ type: 'open_file', href: md.dataset.mdLink }); return; }
+  if (t.closest('a')) return;
+  if (t.tagName === 'IMG') { $('#lightbox img').src = t.src; $('#lightbox').showModal(); return; }
+  const block = t.closest('[data-source-line]');
+  if (block) act({ type: 'jump', line: +block.dataset.sourceLine });
+});
+$('#lightbox').addEventListener('click', () => $('#lightbox').close());
+$('#toc-toggle').onclick = () => setToc(document.body.classList.contains('toc-closed'));
+$('#raw-toggle').onclick = (e) => { const on = $('#source').hidden; $('#source').hidden = !on; doc.hidden = on; e.currentTarget.classList.toggle('active', on); };
+const store = { get: () => { try { return localStorage.getItem('md-peek-scheme'); } catch (e) { return null; } }, set: (v) => { try { localStorage.setItem('md-peek-scheme', v); } catch (e) {} } };
+const saved = store.get(); if (!root.dataset.scheme && C.theme !== 'nvim' && (saved === 'light' || saved === 'dark')) root.dataset.scheme = saved;
+$('#theme-toggle').onclick = () => { const dark = getComputedStyle(root).colorScheme.includes('dark') && root.dataset.scheme !== 'light'; root.dataset.scheme = dark ? 'light' : 'dark'; store.set(root.dataset.scheme); act({ type: 'set_scheme', scheme: root.dataset.scheme }); };
+const progress = () => { const el = document.scrollingElement, max = el.scrollHeight - el.clientHeight; $('#progress').style.width = (max > 0 ? Math.min(100, el.scrollTop / max * 100) : 0) + '%'; };
+addEventListener('scroll', progress, { passive: true, capture: true }); addEventListener('resize', progress); new ResizeObserver(progress).observe(doc);
+doc.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') { e.target.title = 'Image could not be loaded (missing, or outside preview.asset_root): ' + (e.target.getAttribute('alt') || ''); e.target.classList.add('broken'); } }, true);
+$('#print').onclick = () => window.print();
+$('#export').onclick = () => {
+  const page = '<!doctype html><html data-theme="' + (root.dataset.theme || '') + '" data-scheme="' + (root.dataset.scheme || '') + '"><head><meta charset="utf-8"><title>' + document.title.replace(/</g, '&lt;') + '</title><style>' + [...document.querySelectorAll('style')].map((x) => x.textContent).join('\n') + '</style></head><body><main id="viewport" style="margin:auto"><article class="markdown-body">' + doc.innerHTML.replace(/\/asset\?[^"]*/g, '') + '</article></main></body></html>';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([page], { type: 'text/html' })); a.download = (document.title.split(' — ')[0] || 'document') + '.html'; a.click(); toast('Exported');
+};
+]==]
+
+local function scheme_file()
+  return vim.fn.stdpath("state") .. "/md-peek-scheme"
+end
+
+--- The light/dark choice made with the toolbar toggle in an earlier session, if any.
+function M.load_scheme()
+  local file = io.open(scheme_file(), "r")
+  if not file then
+    return nil
+  end
+  local value = vim.trim(file:read("*a") or "")
+  file:close()
+  return (value == "light" or value == "dark") and value or nil
+end
+
+function M.save_scheme(scheme)
+  if scheme ~= "light" and scheme ~= "dark" then
+    return false
+  end
+  pcall(vim.fn.mkdir, vim.fn.stdpath("state"), "p")
+  local file = io.open(scheme_file(), "w")
+  if not file then
+    return false
+  end
+  file:write(scheme)
+  file:close()
+  return true
+end
+
+local function json(value)
+  return (
+    vim.json
+      .encode(value)
+      :gsub("<", "\\u003c")
+      :gsub("\226\128\168", "\\u2028")
+      :gsub("\226\128\169", "\\u2029")
+  )
+end
+
+local function sanitize_value(value)
+  value = tostring(value)
+  if value:find("[;{}<>\\]") then
+    return nil
+  end
+  return value
+end
+
+local function overrides(preview)
+  local rules = {}
+  local font = type(preview.font) == "table" and preview.font or {}
+  local function add(name, value)
+    value = value ~= nil and sanitize_value(value)
+    if value and value ~= "" then
+      table.insert(rules, "  " .. name .. ": " .. value .. ";")
+    end
+  end
+  add("--md-font-ui", font.ui)
+  add("--md-font-mono", font.mono)
+  if type(font.size) == "number" then
+    add("--md-font-size", font.size .. "px")
+  else
+    add("--md-font-size", font.size)
+  end
+  if type(preview.max_width) == "number" then
+    add("--content-width", preview.max_width .. "px")
+  end
+  local colors = type(preview.colors) == "table" and preview.colors or {}
+  local names = vim.tbl_keys(colors)
+  table.sort(names)
+  for _, name in ipairs(names) do
+    if tostring(name):match("^[%w-]+$") then
+      local key = name:match("^%-%-") and name or ("--md-" .. name)
+      add(key, colors[name])
+    end
+  end
+  if #rules == 0 then
+    return ""
+  end
+  -- Doubled selector so these outrank the theme blocks and the light/dark toggle.
+  return ":root:root:root {\n" .. table.concat(rules, "\n") .. "\n}\n"
+end
+
+--- Returns the viewer page. opts: { token, nonce, preview }.
+function M.render(opts)
+  opts = opts or {}
+  local preview = opts.preview or {}
+  local theme = type(preview.theme) == "string" and preview.theme:match("^[%w-]+$") or "dark"
+  local css = STYLE:gsub("/%*NVIM_THEME%*/", "")
+  css = css .. overrides(preview)
+  if type(preview.custom_css) == "string" then
+    css = css .. preview.custom_css:gsub("</[sS][tT][yY][lL][eE]", "<\\/style")
+  end
+
+  local config = json({
+    token = opts.token or "",
+    toc = preview.toc ~= false,
+    toc_open = preview.toc_open == true,
+    raw_toggle = preview.raw_toggle ~= false,
+    scroll_sync = preview.scroll_sync ~= false,
+    preserve_scroll = preview.preserve_scroll ~= false,
+    theme = theme,
+  })
+  -- A scheme toggled in an earlier session; it would hide the colorscheme of the nvim theme.
+  local scheme = (opts.scheme == "light" or opts.scheme == "dark")
+      and theme ~= "nvim"
+      and opts.scheme
+    or nil
+  local script = SCRIPT:gsub("__CONFIG__", function()
+    return config
+  end)
+
+  return table.concat({
+    '<!doctype html>\n<html lang="en" data-theme="'
+      .. theme
+      .. '"'
+      .. (scheme and (' data-scheme="' .. scheme .. '"') or "")
+      .. ">\n<head>\n",
+    '<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n',
+    "<title>md-peek</title>\n<style>\n",
+    css,
+    '\n</style>\n<style id="nvim-theme">\n',
+    theme == "nvim" and highlight.nvim_theme_css() or "",
+    "</style>\n</head>\n<body>\n",
+    BODY,
+    '\n<script nonce="' .. (opts.nonce or "") .. '">\n',
+    script,
+    "</script>\n</body>\n</html>\n",
+  })
+end
+
+return M

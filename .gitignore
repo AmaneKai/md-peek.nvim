@@ -1,4 +1,3 @@
-server/node_modules/
-node_modules/
 .tests/
 .DS_Store
+repomix-output.xml
