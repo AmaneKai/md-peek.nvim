@@ -28,6 +28,7 @@ return {
     theme = "dark",
     toc = true,
     toc_open = false,
+    mermaid = true, -- diagrams: the Mermaid bundle is downloaded once (curl) into the cache dir
     math = true, -- LaTeX math as native MathML: $..$, $$..$$, \\(..\\), \\[..\\]
     emoji = true,
     raw_toggle = true,

@@ -3,13 +3,244 @@ local uv = vim.uv or vim.loop
 local server = require("md-peek.server")
 local browser = require("md-peek.browser")
 local overlay = require("md-peek.overlay")
-local events = require("md-peek.events")
 local diagnostics = require("md-peek.diagnostics")
 local highlight = require("md-peek.highlight")
-local session = require("md-peek.session")
-local is_markdown = require("md-peek.markdown").is_markdown
 
 M.config = require("md-peek.config")
+
+local session = (function()
+  local M = {}
+
+  local ALLOWED = {
+    idle = { starting = true },
+    starting = { active = true, error = true, stopping = true },
+    active = { error = true, stopping = true },
+    stopping = { idle = true, error = true },
+    error = { starting = true, stopping = true },
+  }
+
+  local current = {}
+  local last_id = 0
+
+  local function reset()
+    current = { state = "idle", id = last_id }
+  end
+  reset()
+
+  local function transition(to)
+    if not ALLOWED[current.state][to] then
+      return false, string.format("invalid session transition %s -> %s", current.state, to)
+    end
+    current.state = to
+    return true
+  end
+
+  function M.state()
+    return current.state
+  end
+
+  function M.bufnr()
+    return current.bufnr
+  end
+
+  function M.error()
+    return current.error
+  end
+
+  function M.id()
+    return current.id
+  end
+
+  --- True while `id` still names the running session (it changes on every begin).
+  function M.is_current(id)
+    return id == current.id and current.state ~= "idle"
+  end
+
+  --- True once the server is up and the buffer can be rendered.
+  function M.is_active(bufnr)
+    return current.state == "active" and (bufnr == nil or current.bufnr == bufnr)
+  end
+
+  --- True for any session that owns `bufnr`, whether still starting or already active.
+  function M.owns(bufnr)
+    return (current.state == "starting" or current.state == "active") and current.bufnr == bufnr
+  end
+
+  --- Starts a session for `bufnr`; returns its id, or nil plus the reason.
+  function M.begin(bufnr, now)
+    local ok, err = transition("starting")
+    if not ok then
+      return nil, err
+    end
+    last_id = last_id + 1
+    current = {
+      state = "starting",
+      id = last_id,
+      bufnr = bufnr,
+      opened_at = now,
+      last_sent = nil,
+    }
+    return current.id
+  end
+
+  function M.activate()
+    return transition("active")
+  end
+
+  function M.fail(message)
+    local ok, err = transition("error")
+    if ok then
+      current.error = message
+    end
+    return ok, err
+  end
+
+  function M.stop()
+    return transition("stopping")
+  end
+
+  --- Completes a stop: the session is gone and a new one may begin.
+  function M.finish()
+    local ok, err = transition("idle")
+    if ok then
+      reset()
+    end
+    return ok, err
+  end
+
+  --- Moves an active session to another buffer without restarting anything. The id stays the same,
+  --- so the server's callbacks keep working; what was sent before no longer applies.
+  function M.retarget(bufnr)
+    if current.state ~= "active" then
+      return false, "only an active session can change buffer"
+    end
+    current.bufnr = bufnr
+    current.last_sent = nil
+    return true
+  end
+
+  function M.opened_at()
+    return current.opened_at
+  end
+
+  --- The last document sent to the browser, used to skip identical re-renders.
+  function M.last_sent()
+    return current.last_sent
+  end
+
+  function M.set_last_sent(document)
+    current.last_sent = document
+  end
+
+  return M
+end)()
+local events = (function()
+  local M = {}
+
+  local TASK_PATTERNS = {
+    "^(%s*[-*+]%s+%[)([ xX])(%].*)$",
+    "^(%s*%d+[.)]%s+%[)([ xX])(%].*)$",
+  }
+
+  --- Flips the `[ ]`/`[x]` marker on a Markdown task line. Returns true when the line was a task.
+  function M.toggle_task(bufnr, line)
+    if
+      not vim.api.nvim_buf_is_valid(bufnr)
+      or line < 1
+      or line > vim.api.nvim_buf_line_count(bufnr)
+    then
+      return false
+    end
+    local text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1]
+    for _, pattern in ipairs(TASK_PATTERNS) do
+      local head, mark, tail = text:match(pattern)
+      if head then
+        local flipped = head .. (mark == " " and "x" or " ") .. tail
+        vim.api.nvim_buf_set_lines(bufnr, line - 1, line, false, { flipped })
+        return true
+      end
+    end
+    return false
+  end
+
+  --- Handles one decoded event from the preview server.
+  --- `session` exposes just what is needed from init.lua: is_active(), has_preview(),
+  --- is_markdown(bufnr), render(immediate), follow(bufnr), trace(message), opened_ms(), open() and
+  --- close().
+  function M.handle(bufnr, event, session)
+    if type(event) ~= "table" then
+      return
+    end
+    vim.schedule(function()
+      if event.type == "error" then
+        vim.notify(
+          "[md-peek] preview server rejected an editor message: " .. tostring(event.error),
+          vim.log.levels.ERROR
+        )
+      elseif event.type == "jump" and session.is_active() and vim.api.nvim_buf_is_valid(bufnr) then
+        local win = vim.fn.bufwinid(bufnr)
+        if win ~= -1 then
+          local target =
+            math.max(1, math.min(tonumber(event.line) or 1, vim.api.nvim_buf_line_count(bufnr)))
+          vim.api.nvim_set_current_win(win)
+          vim.api.nvim_win_set_cursor(win, { target, 0 })
+        end
+      elseif event.type == "rendered" then
+        -- Only reported in debug mode: the first one is the first paint after :MdPeekOpen.
+        if not M.first_render_seen then
+          M.first_render_seen = true
+          local opened = session.opened_ms()
+          if opened then
+            session.trace(string.format("first render after %.0f ms", opened))
+          end
+        elseif tonumber(event.latency_ms) then
+          session.trace(string.format("render took %.0f ms from keystroke", event.latency_ms))
+        end
+      elseif event.type == "toggle_task" and session.is_active() then
+        local line = tonumber(event.line)
+        if line and M.toggle_task(bufnr, line) then
+          session.render(true) -- the user just clicked; do not wait out the typing debounce
+        else
+          vim.notify("[md-peek] that line is not a task list item", vim.log.levels.WARN)
+        end
+      elseif event.type == "open_file" and type(event.path) == "string" then
+        local reopen = session.has_preview()
+        local origin = vim.api.nvim_get_current_buf()
+        -- Edit first: a failure (e.g. E37 on a modified buffer) must not cost the user their preview.
+        local edited, err = pcall(vim.cmd.edit, vim.fn.fnameescape(event.path))
+        if not edited then
+          vim.notify("[md-peek] could not open linked file: " .. tostring(err), vim.log.levels.WARN)
+          return
+        end
+        local current = vim.api.nvim_get_current_buf()
+        if reopen and current ~= origin then
+          if session.is_markdown(current) then
+            session.follow(current) -- keep the window and server; just show the new file
+          else
+            session.close()
+          end
+        end
+      end
+    end)
+  end
+
+  return M
+end)()
+
+--- True for buffers md-peek can preview, by filetype or by file name.
+local function is_markdown(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+  local filetype = vim.bo[bufnr].filetype
+  if filetype == "markdown" or filetype == "mdx" then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr):lower()
+  return name:match("%.md$") ~= nil or name:match("%.markdown$") ~= nil
+end
+
+M.session, M.events, M.is_markdown = session, events, is_markdown
 
 local timers = {}
 

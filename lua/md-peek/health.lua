@@ -43,7 +43,7 @@ function M.check()
     vim.health.error("vim.treesitter is unavailable")
   end
   local browser_preference = require("md-peek").config.browser
-  local detect = require("md-peek.browser.detect")
+  local detect = require("md-peek.browser")
   local found = detect.find(browser_preference)
   if found then
     vim.health.ok(

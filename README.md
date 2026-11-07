@@ -14,7 +14,7 @@ Write Markdown in Neovim and read it in a fast browser preview that stays in syn
 - Syntax highlighting for every language you have a Tree-sitter parser for, using your own parsers, plus one-click code copying
 - A `nvim` theme that takes its colors from your active colorscheme and follows `:colorscheme` changes live
 - LaTeX math (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`) rendered as native MathML by a small Lua translator: fractions, roots, scripts, big operators with limits, accents, matrices, fonts and Greek, with no JavaScript or font bundle. Prices such as `$5 or $10` are left alone. Needs a browser with MathML Core (Chrome 109+, Firefox, Safari)
-- `mermaid` and `mmd` fenced blocks are shown as source (diagram rendering needs a JavaScript library, which this plugin deliberately does not ship)
+- `mermaid` and `mmd` fenced blocks render as diagrams: the Mermaid bundle is downloaded once with `curl` into Neovim's cache directory and served from there (offline or without curl they stay as source); click a diagram to zoom and pan
 - Images are revalidated with `ETag`, and an image edited on disk gets a new URL on the next render, so it refreshes without reloading the page
 - Nothing is compiled while no browser is connected
 - `:emoji:` shortcodes, footnotes, YAML front matter, and GitHub-style alerts
@@ -81,23 +81,19 @@ require("md-peek").setup()
 
 ```text
 lua/md-peek/
-  init.lua        setup and commands; wires the session to buffers, server and browser
-  session.lua     the preview lifecycle as a state machine (idle, starting, active, stopping, error)
+  init.lua        setup and commands; the session state machine, event handling, buffer wiring
   config.lua      default options
-  server.lua      in-process vim.uv HTTP + Server-Sent Events server on 127.0.0.1; serves the page, assets and events
-  compiler.lua    GitHub-flavoured Markdown to HTML in pure Lua, with data-source-line on every block
-  highlight.lua   Tree-sitter code highlighting and the `nvim` colorscheme theme
-  page.lua        the single self-contained viewer page: CSS plus ~70 lines of inline JavaScript
-  events.lua      reacts to events from the preview (jump, open_file, toggle_task, rendered)
+  server.lua      in-process vim.uv HTTP + SSE server: the page, /asset (Range, ETag), /mermaid.js, events
+  compiler.lua    GitHub-flavoured Markdown to HTML, with data-source-line on every block
   math.lua        LaTeX to MathML translator
+  highlight.lua   Tree-sitter code highlighting and the `nvim` colorscheme theme
+  page.lua        the single viewer page: CSS, and the script that sanitizes (<template>), builds the
+                  TOC, patches the DOM, draws Mermaid and handles clicks
+  browser.lua     finding browsers, launching the preview window, moving and closing it
+  overlay.lua     the heading scanner, the status HUD and the outline popup
   diagnostics.lua missing links/images and unknown #anchors as vim.diagnostic
-  markdown.lua    is this buffer Markdown? plus the one scanner (front matter, fences, headings) that the outline and the link diagnostics share
-  browser/        init.lua (open/close), detect.lua (find installs), profile.lua, process.lua
-    drivers/      base.lua (the contract), chromium.lua, firefox.lua
-    windows/      per-OS window control: osascript, xdotool, wmctrl, powershell
-  overlay/        headings.lua, status.lua (HUD), outline.lua, ui.lua
   health.lua      :checkhealth md-peek
-tests/            headless-Neovim smoke tests (module units plus a real TCP server)
+tests/            headless-Neovim smoke tests (units, a real TCP server, and Chrome when present)
 ```
 
 ## Usage
@@ -184,6 +180,7 @@ require("md-peek").setup({
     theme = "dark", -- dark, github, tokyonight, gruvbox, rose-pine, nvim (your colorscheme)
     toc = true,
     toc_open = false, -- initial sidebar state; the toolbar button still toggles it
+    mermaid = true, -- diagrams (the bundle is downloaded once with curl)
     math = true, -- LaTeX math as native MathML
     emoji = true,
     raw_toggle = true,
@@ -241,7 +238,10 @@ $$
 \begin{pmatrix} a & b \\ c & d \end{pmatrix}
 $$
 
-Mermaid blocks appear as plain source.
+```mermaid
+flowchart LR
+  Neovim --> Preview
+```
 
 ## How it works
 

@@ -48,6 +48,7 @@ local REASONS = {
   [413] = "Payload Too Large",
   [431] = "Request Header Fields Too Large",
   [500] = "Internal Server Error",
+  [503] = "Service Unavailable",
 }
 
 local tcp_server
@@ -493,6 +494,63 @@ local function handle_asset(client, request)
   stream_file(client, real, mime, request.headers["range"], request.headers["if-none-match"])
 end
 
+local MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
+local mermaid_waiting -- requests queued while the bundle downloads
+
+local function mermaid_path()
+  return vim.fn.stdpath("cache") .. "/md-peek/mermaid.min.js"
+end
+
+local function serve_mermaid(client, request, path)
+  stream_file(
+    client,
+    path,
+    "application/javascript; charset=utf-8",
+    request.headers["range"],
+    request.headers["if-none-match"]
+  )
+end
+
+--- Serves the Mermaid bundle from the cache, downloading it with curl the first time it is asked
+--- for. Without curl or a network the answer is 503 and the diagrams stay as source.
+local function handle_mermaid(client, request)
+  local path = mermaid_path()
+  if preview_config.mermaid == false then
+    return text(client, 404)
+  elseif uv.fs_stat(path) then
+    return serve_mermaid(client, request, path)
+  elseif vim.fn.executable("curl") ~= 1 then
+    return text(client, 503, "mermaid is not cached and curl is not available")
+  elseif mermaid_waiting then
+    return table.insert(mermaid_waiting, { client, request })
+  end
+  mermaid_waiting = { { client, request } }
+  vim.fn.mkdir(dirname(path), "p")
+  local partial = path .. ".part" .. (random_hex(4) or "")
+  vim.system(
+    { "curl", "-fsSL", "--max-time", "20", MERMAID_URL, "-o", partial },
+    {},
+    function(result)
+      vim.schedule(function()
+        local waiting = mermaid_waiting
+        mermaid_waiting = nil
+        local stat = result.code == 0 and uv.fs_stat(partial)
+        local ok = stat and stat.size > 1000 and uv.fs_rename(partial, path)
+        if not ok then
+          uv.fs_unlink(partial)
+        end
+        for _, pending in ipairs(waiting) do
+          if ok then
+            serve_mermaid(pending[1], pending[2], path)
+          else
+            text(pending[1], 503, "mermaid could not be downloaded")
+          end
+        end
+      end)
+    end
+  )
+end
+
 local function resolve_markdown_link(href)
   if type(href) ~= "string" or not current_doc_path then
     return nil
@@ -587,7 +645,9 @@ local function handle_request(client, request)
       return text(client, 401)
     end
     local nonce = random_hex(16) or tostring(uv.hrtime())
+    M.flush_pending() -- a browser is here now: compile what is waiting, and paint it at once
     local ok, html = pcall(page.render, {
+      initial = last_render_payload,
       token = M.token,
       nonce = nonce,
       preview = preview_config,
@@ -610,6 +670,11 @@ local function handle_request(client, request)
       return text(client, 401)
     end
     return handle_act(client, request)
+  elseif request.method == "GET" and request.path == "/mermaid.js" then
+    if not authorized(request) then
+      return text(client, 401)
+    end
+    return handle_mermaid(client, request)
   elseif request.method == "GET" and request.path == "/asset" then
     if not authorized(request) then
       return text(client, 401)
@@ -814,23 +879,23 @@ function M.start(opts)
   return true
 end
 
---- Adds `&v=<mtime-size>` to every /asset URL in `html`, so an image that changed on disk gets a
---- new URL (and the browser refetches it) the next time the document renders.
-local function stamp_assets(html)
-  if not current_doc_path or not html:find("/asset?path=", 1, true) then
-    return html
+--- `{ [src] = "mtime-size" }` for the local files an HTML fragment embeds. The page adds it to
+--- the asset URL, so an image edited on disk gets a new URL and the browser refetches it.
+local function asset_versions(html)
+  local versions = {}
+  if not current_doc_path then
+    return versions
   end
   local directory = dirname(current_doc_path)
-  return (
-    html:gsub('(/asset%?path=)([^&"]*)(&amp;token=)', function(head, path, tail)
-      local decoded = percent_decode(path)
-      local stat = uv.fs_stat(is_absolute(decoded) and decoded or (directory .. "/" .. decoded))
-      if not stat then
-        return nil
+  for src in html:gmatch('%ssrc="([^"]+)"') do
+    if not versions[src] and not src:match("^%a[%w+.-]*:") and not src:match("^[/#]") then
+      local stat = uv.fs_stat(directory .. "/" .. percent_decode((src:gsub("[?#].*$", ""))))
+      if stat then
+        versions[src] = stat.mtime.sec .. "-" .. stat.size
       end
-      return head .. path .. "&amp;v=" .. stat.mtime.sec .. "-" .. stat.size .. tail
-    end)
-  )
+    end
+  end
+  return versions
 end
 
 --- Compiles a document into the JSON payload sent to the browser.
@@ -842,14 +907,13 @@ local function render_payload(document, sent_at)
       html = "<pre>md-peek could not render this document:\n" .. compiler.escape(
         tostring(compiled)
       ) .. "</pre>",
-      toc = {},
       title = "Markdown",
     }
   end
   local encoded, payload = pcall(vim.json.encode, {
     type = "render",
-    html = stamp_assets(compiled.html),
-    toc = compiled.toc,
+    html = compiled.html,
+    assets = asset_versions(compiled.html),
     title = compiled.title,
     raw = document.content,
     path = current_doc_path,

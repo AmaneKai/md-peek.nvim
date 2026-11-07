@@ -27,54 +27,17 @@ local function unescape(text)
   return (text:gsub("&#?%w+;", ENTITIES))
 end
 
+-- stylua: ignore
 local EMOJI = {
-  rocket = "🚀",
-  warning = "⚠️",
-  check = "✅",
-  white_check_mark = "✅",
-  x = "❌",
-  sparkles = "✨",
-  bug = "🐛",
-  fire = "🔥",
-  thumbsup = "👍",
-  ["+1"] = "👍",
-  tada = "🎉",
-  bulb = "💡",
-  memo = "📝",
-  heart = "❤️",
-  star = "⭐",
-  eyes = "👀",
-  wave = "👋",
-  thinking = "🤔",
-  ["100"] = "💯",
+  rocket = "🚀", warning = "⚠️", check = "✅", white_check_mark = "✅", x = "❌", sparkles = "✨",
+  bug = "🐛", fire = "🔥", thumbsup = "👍", ["+1"] = "👍", tada = "🎉", bulb = "💡", memo = "📝",
+  heart = "❤️", star = "⭐", eyes = "👀", wave = "👋", thinking = "🤔", ["100"] = "💯",
 }
 
+-- stylua: ignore
 local ALERTS = {
-  NOTE = "Note",
-  TIP = "Tip",
-  IMPORTANT = "Important",
-  WARNING = "Warning",
-  CAUTION = "Caution",
+  NOTE = "Note", TIP = "Tip", IMPORTANT = "Important", WARNING = "Warning", CAUTION = "Caution",
 }
-
-local function word_set(words)
-  local set = {}
-  for word in words:gmatch("%S+") do
-    set[word] = true
-  end
-  return set
-end
-
--- Raw HTML is reduced to this allowlist; every other tag is shown as escaped text.
-local ALLOWED_TAGS = word_set([[details summary kbd sub sup br hr b i u s em strong del ins mark
-  small abbr code pre blockquote ul ol li dl dt dd table thead tbody tfoot tr th td caption p div
-  span h1 h2 h3 h4 h5 h6 img a figure figcaption picture source ruby rt rp]])
-local VOID_TAGS = word_set("br hr img source")
-local ALLOWED_ATTRIBUTES =
-  word_set("href src alt title width height align colspan rowspan open id class name start type")
--- Ids the viewer page itself uses; a document must not be able to shadow them.
-local RESERVED_IDS = word_set([[progress toolbar toc-toggle title-wrap document-title status toc
-  toc-heading toc-content toc-resizer viewport document source empty lightbox toast]])
 
 local BLOCK_TAGS = {}
 for tag in
@@ -99,197 +62,10 @@ local function percent_encode(text)
   )
 end
 
-local function percent_decode(text)
-  return (text:gsub("%%(%x%x)", function(hex)
-    return string.char(tonumber(hex, 16))
-  end))
-end
-
---- Rejects script-bearing URLs, looking through entities and control characters that browsers
---- ignore when reading a scheme. `kind` is "image" to allow data:image/ URLs.
-local function safe_url(url, kind)
-  local decoded = url
-    :gsub("&#[xX](%x+);?", function(hex)
-      return string.char(tonumber(hex, 16) % 256)
-    end)
-    :gsub("&#(%d+);?", function(number)
-      return string.char(tonumber(number) % 256)
-    end)
-    :gsub("&colon;", ":")
-    :gsub("%%(%x%x)", function(hex)
-      return string.char(tonumber(hex, 16))
-    end)
-    :gsub("[%c%s]", "")
-    :lower()
-  if decoded:match("^javascript:") or decoded:match("^vbscript:") then
-    return false
-  end
-  if decoded:match("^data:") then
-    local subtype = kind == "image" and decoded:match("^data:image/(%a+);base64,")
-    return subtype == "png" or subtype == "jpeg" or subtype == "gif" or subtype == "webp"
-  end
-  return true
-end
-
-local function is_local(url)
-  return url ~= ""
-    and not url:match("^%a[%w+.-]*:")
-    and not url:match("^//")
-    and not url:match("^/")
-    and not url:match("^#")
-end
-
-local function asset_url(ctx, url)
-  local path = percent_decode((url:gsub("[?#].*$", "")))
-  return "/asset?path=" .. percent_encode(path) .. "&token=" .. (ctx.token or "")
-end
-
-local function is_markdown_file(url)
-  local path = url:gsub("[?#].*$", ""):lower()
-  return is_local(url) and (path:match("%.md$") ~= nil or path:match("%.markdown$") ~= nil)
-end
-
---- Parses the tag that starts at `s[i]` (a "<"), honouring quoted attribute values that contain
---- ">". Returns { name, closing, attrs = { {key, value}, ... }, stop } or nil when it is not a tag.
-local function parse_tag(s, i)
-  local closing, name, pos = s:match("^<(/?)([%a][%w-]*)()", i)
-  if not name then
-    return nil
-  end
-  local attrs = {}
-  while true do
-    local _, space_end = s:find("^%s*", pos)
-    pos = space_end + 1
-    local char = s:sub(pos, pos)
-    if char == "" then
-      return nil
-    elseif char == ">" then
-      return { name = name:lower(), closing = closing == "/", attrs = attrs, stop = pos }
-    elseif char == "/" then
-      if s:sub(pos + 1, pos + 1) == ">" then
-        return { name = name:lower(), closing = closing == "/", attrs = attrs, stop = pos + 1 }
-      end
-      pos = pos + 1
-    else
-      local key, after = s:match("^([^%s=/>\"'<]+)()", pos)
-      if not key then
-        return nil
-      end
-      pos = after
-      local _, equals_end = s:find("^%s*", pos)
-      local value
-      if s:sub(equals_end + 1, equals_end + 1) == "=" then
-        local _, value_start = s:find("^%s*", equals_end + 2)
-        pos = value_start + 1
-        local quote = s:sub(pos, pos)
-        if quote == '"' or quote == "'" then
-          local close = s:find(quote, pos + 1, true)
-          if not close then
-            return nil
-          end
-          value = s:sub(pos + 1, close - 1)
-          pos = close + 1
-        else
-          value, pos = s:match("^([^%s>]*)()", pos)
-        end
-      end
-      table.insert(attrs, { key:lower(), value })
-    end
-  end
-end
-
---- Rebuilds an allowlisted tag with only allowlisted attributes. Returns nil for any other tag.
-local function render_tag(ctx, tag)
-  local name = tag.name
-  if not ALLOWED_TAGS[name] then
-    return nil
-  end
-  if tag.closing then
-    return VOID_TAGS[name] and "" or ("</" .. name .. ">")
-  end
-  local out, href = {}, nil
-  for _, attr in ipairs(tag.attrs) do
-    local key, value = attr[1], attr[2]
-    local keep = ALLOWED_ATTRIBUTES[key] ~= nil
-    if key == "type" then
-      keep = keep and (name == "ol" or name == "li")
-    elseif key == "name" then
-      keep = keep and name == "a"
-    elseif key == "id" then
-      keep = keep and value ~= nil and value ~= "" and not RESERVED_IDS[value]
-    elseif key == "href" or key == "src" then
-      if value == nil or not safe_url(value, key == "src" and "image" or nil) then
-        keep = false
-      elseif key == "src" then
-        if is_local(value) then
-          value = asset_url(ctx, value)
-        end
-      else
-        href = value
-      end
-    elseif value == nil and key ~= "open" then
-      keep = false
-    end
-    if keep then
-      if value == nil then
-        table.insert(out, key)
-      else
-        table.insert(out, key .. '="' .. escape(unescape(value)) .. '"')
-      end
-    end
-  end
-  if name == "a" and href then
-    if is_markdown_file(href) then
-      table.insert(out, 'data-md-link="' .. escape(unescape(href)) .. '"')
-    elseif href:match("^%a[%w+.-]*:") or href:match("^//") then
-      table.insert(out, 'target="_blank" rel="noopener noreferrer"')
-    end
-  elseif name == "img" then
-    table.insert(out, 'loading="lazy"')
-  end
-  return "<" .. name .. (#out > 0 and (" " .. table.concat(out, " ")) or "") .. ">"
-end
-
-local function sanitize_html(ctx, html)
-  local config = ctx.config
-  if config.allow_html == false then
-    return escape(html)
-  end
-  if config.sanitize == false then
-    return html
-  end
-  local out, pos = {}, 1
-  while true do
-    local lt = html:find("<", pos, true)
-    if not lt then
-      table.insert(out, html:sub(pos))
-      break
-    end
-    table.insert(out, html:sub(pos, lt - 1))
-    if html:sub(lt, lt + 3) == "<!--" then
-      local close = html:find("-->", lt + 4, true)
-      if close then
-        pos = close + 3
-      else
-        table.insert(out, "&lt;")
-        pos = lt + 1
-      end
-    else
-      local tag = parse_tag(html, lt)
-      local rendered = tag and render_tag(ctx, tag)
-      if rendered then
-        table.insert(out, rendered)
-        pos = tag.stop + 1
-      elseif tag then
-        table.insert(out, escape(html:sub(lt, tag.stop)))
-        pos = tag.stop + 1
-      else
-        table.insert(out, "&lt;")
-        pos = lt + 1
-      end
-    end
-  end
-  return table.concat(out)
+--- Raw HTML is handed to the browser, which parses and sanitizes it (see page.lua); with
+--- `allow_html = false` it is shown as text instead.
+local function raw_html(ctx, html)
+  return ctx.config.allow_html == false and escape(html) or html
 end
 
 ---------------------------------------------------------------------------------------------
@@ -347,32 +123,14 @@ local function parse_destination(s, pos)
   return dest, title, pos + 1
 end
 
-local function link_html(ctx, dest, title, inner_html)
-  if not safe_url(dest) then
-    return inner_html
-  end
-  local attrs = { 'href="' .. escape(dest) .. '"' }
-  if title and title ~= "" then
-    table.insert(attrs, 'title="' .. escape(title) .. '"')
-  end
-  if is_markdown_file(dest) then
-    table.insert(attrs, 'data-md-link="' .. escape(dest) .. '"')
-  elseif dest:match("^%a[%w+.-]*:") or dest:match("^//") then
-    table.insert(attrs, 'target="_blank" rel="noopener noreferrer"')
-  end
-  return "<a " .. table.concat(attrs, " ") .. ">" .. inner_html .. "</a>"
+local function link_html(_, dest, title, inner_html)
+  local title_attr = title and title ~= "" and (' title="' .. escape(title) .. '"') or ""
+  return '<a href="' .. escape(dest) .. '"' .. title_attr .. ">" .. inner_html .. "</a>"
 end
 
-local function image_html(ctx, dest, title, alt)
-  if not safe_url(dest, "image") then
-    return escape(alt)
-  end
-  local src = is_local(dest) and asset_url(ctx, dest) or dest
-  local attrs = { 'src="' .. escape(src) .. '"', 'alt="' .. escape(alt) .. '"', 'loading="lazy"' }
-  if title and title ~= "" then
-    table.insert(attrs, 'title="' .. escape(title) .. '"')
-  end
-  return "<img " .. table.concat(attrs, " ") .. ">"
+local function image_html(_, dest, title, alt)
+  local title_attr = title and title ~= "" and (' title="' .. escape(title) .. '"') or ""
+  return '<img src="' .. escape(dest) .. '" alt="' .. escape(alt) .. '"' .. title_attr .. ">"
 end
 
 local function strip_tags(html)
@@ -381,6 +139,20 @@ end
 
 local function normalize_label(label)
   return (vim.trim(label):gsub("%s+", " "):lower())
+end
+
+--- `[label]: destination "title"` -> label, destination, title (or nil).
+local function parse_definition(line)
+  local label, rest = line:match("^ ? ? ?%[([^%]^][^%]]*)%]:%s*(.-)%s*$")
+  if not label or rest == "" then
+    return nil
+  end
+  local dest, tail = rest:match("^<([^>]*)>%s*(.*)$")
+  if not dest then
+    dest, tail = rest:match("^(%S+)%s*(.*)$")
+  end
+  local title = tail:match('^"(.*)"$') or tail:match("^'(.*)'$") or tail:match("^%((.*)%)$")
+  return label, unescape(dest), title
 end
 
 --- Finds the `$` that closes an inline `$...$` opened at `start`, or nil. Like pandoc, the opener
@@ -518,26 +290,9 @@ function inline(ctx, text, nested_link, store)
   text = text:gsub("<!%-%-.-%-%->", function()
     return hold("")
   end)
-  do
-    local pieces, position = {}, 1
-    while true do
-      local lt = text:find("<", position, true)
-      if not lt then
-        table.insert(pieces, text:sub(position))
-        break
-      end
-      local tag = parse_tag(text, lt)
-      if tag then
-        table.insert(pieces, text:sub(position, lt - 1))
-        table.insert(pieces, hold(sanitize_html(ctx, text:sub(lt, tag.stop))))
-        position = tag.stop + 1
-      else
-        table.insert(pieces, text:sub(position, lt))
-        position = lt + 1
-      end
-    end
-    text = table.concat(pieces)
-  end
+  text = text:gsub("</?[%a][%w:-]*[^<>]*>", function(tag)
+    return hold(raw_html(ctx, tag))
+  end)
 
   -- 4. Images, links, footnote references and reference links.
   local out, cursor = {}, 1
@@ -905,7 +660,6 @@ local function heading_html(ctx, level, text, line_number)
   local count = ctx.used_slugs[base] or 0
   ctx.used_slugs[base] = count + 1
   local id = count > 0 and (base .. "-" .. count) or base
-  table.insert(ctx.toc, { level = level, title = plain, id = id, line = line_number })
   if level == 1 and not ctx.title then
     ctx.title = plain
   end
@@ -919,31 +673,23 @@ local function heading_html(ctx, level, text, line_number)
   )
 end
 
-local function code_block_html(ctx, lang, code_lines, line_number)
+local function code_block_html(_, lang, code_lines, line_number)
   local code = table.concat(code_lines, "\n")
-  local word = lang:match("^[^%s{]+") or ""
-  local lowered = word:lower()
-  if lowered == "mermaid" or lowered == "mmd" then
+  local name = (lang:match("^[^%s{]+") or ""):lower()
+  if name == "mermaid" or name == "mmd" then
     return '<pre class="mermaid" data-source-line="'
       .. line_number
       .. '">'
       .. escape(code)
       .. "</pre>"
   end
-  local tools = ""
-  if ctx.config.code_copy ~= false then
-    tools =
-      '<div class="code-tools"><button class="copy-code" title="Copy code">Copy</button></div>'
-  end
-  local class = "hljs" .. (lowered ~= "" and (" language-" .. escape(lowered)) or "")
+  local class = "hljs" .. (name ~= "" and (" language-" .. escape(name)) or "")
   return '<div class="code-block" data-source-line="'
     .. line_number
-    .. '">'
-    .. tools
-    .. '<pre><code class="'
+    .. '"><pre><code class="'
     .. class
     .. '">'
-    .. highlight.highlight(code, lowered)
+    .. highlight.highlight(code, name)
     .. "</code></pre></div>"
 end
 
@@ -969,7 +715,7 @@ local function html_block(ctx, entries, i, kind)
   if ctx.config.allow_html == false then
     return '<p data-source-line="' .. entries[i].n .. '">' .. escape(raw) .. "</p>", j
   end
-  return sanitize_html(ctx, raw), j
+  return raw_html(ctx, raw), j
 end
 
 --- A display-math block (`$$ ... $$` or `\[ ... \]`) that starts at entry `i` and owns its
@@ -1007,14 +753,11 @@ local function math_extent(entries, i)
   return nil
 end
 
+--- The attributes of a `<details ...>` tag that opens `line`, or nil.
 local function details_open_tag(line)
-  if not line:find("<", 1, true) then
-    return nil
-  end
-  local tag = parse_tag(line, #line:match("^%s*") + 1)
-  if tag and tag.name == "details" and not tag.closing then
-    return tag
-  end
+  local attrs = line:match("^%s*<[dD][eE][tT][aA][iI][lL][sS]([^>]*)>")
+  return attrs
+    and { open = attrs:lower():find("%f[%w]open%f[%W]") ~= nil, rest = #line:match("^%s*<[^>]*>") }
 end
 
 --- A `<details>` element whose body is Markdown. Returns html and the next entry index, or nil
@@ -1022,12 +765,7 @@ end
 local function details_block(ctx, entries, i)
   local first = entries[i].text
   local tag = details_open_tag(first)
-  local is_open = false
-  for _, attr in ipairs(tag.attrs) do
-    if attr[1] == "open" then
-      is_open = true
-    end
-  end
+  local is_open = tag.open
 
   local inner, depth = {}, 1
   local fence_char, fence_length
@@ -1069,7 +807,7 @@ local function details_block(ctx, entries, i)
   end
 
   local j = i
-  local closed = feed(first:sub(tag.stop + 1), entries[i].n)
+  local closed = feed(first:sub(tag.rest + 1), entries[i].n)
   while not closed and j < #entries do
     j = j + 1
     closed = feed(entries[j].text, entries[j].n)
@@ -1397,11 +1135,9 @@ function compile_blocks(ctx, entries, tight)
       ctx.footnote_bodies[id] = body
       ctx.impure = true
       i = j
-    elseif line:match("^ ? ? ?%[[^%]]+%]:%s*%S") then
-      local label, dest, rest = line:match("^ ? ? ?%[([^%]]+)%]:%s*(%S+)%s*(.*)$")
-      dest = dest:gsub("^<(.*)>$", "%1")
-      local title = rest:match('^"(.*)"$') or rest:match("^'(.*)'$") or rest:match("^%((.*)%)$")
-      ctx.definitions[normalize_label(label)] = { dest = unescape(dest), title = title }
+    elseif parse_definition(line) then
+      local label, dest, title = parse_definition(line)
+      ctx.definitions[normalize_label(label)] = { dest = dest, title = title }
       i = i + 1
     else
       local header = i < count and line:find("|", 1, true) and split_row(line)
@@ -1650,7 +1386,6 @@ local function fingerprint(ctx)
     tostring(config.allow_html),
     tostring(config.sanitize),
     tostring(config.emoji),
-    tostring(config.code_copy),
     tostring(config.math),
     tostring(ctx.token),
   }
@@ -1671,7 +1406,6 @@ end
 function M.slug(title, config)
   local ctx = {
     config = config or {},
-    toc = {},
     used_slugs = {},
     definitions = {},
     footnote_ids = {},
@@ -1681,7 +1415,7 @@ function M.slug(title, config)
   return slugify(inline(ctx, title))
 end
 
---- Compiles Markdown. Returns `{ html = string, toc = { {level, title, id, line} }, title = string }`.
+--- Compiles Markdown. Returns `{ html = string, title = string }`.
 function M.compile(content, config, doc_path, token)
   config = config or {}
   content = content or ""
@@ -1699,7 +1433,6 @@ function M.compile(content, config, doc_path, token)
   local ctx = {
     config = config,
     token = token,
-    toc = {},
     used_slugs = {},
     definitions = {},
     footnote_ids = {},
@@ -1755,13 +1488,9 @@ function M.compile(content, config, doc_path, token)
         if id then
           ctx.footnote_ids[id] = true
         else
-          local label, dest, rest = line:match("^ ? ? ?%[([^%]^][^%]]*)%]:%s*(%S+)%s*(.*)$")
+          local label, dest, title = parse_definition(line)
           if label then
-            dest = dest:gsub("^<(.*)>$", "%1")
-            local title = rest:match('^"(.*)"$')
-              or rest:match("^'(.*)'$")
-              or rest:match("^%((.*)%)$")
-            ctx.definitions[normalize_label(label)] = { dest = unescape(dest), title = title }
+            ctx.definitions[normalize_label(label)] = { dest = dest, title = title }
           end
         end
       end
@@ -1827,7 +1556,7 @@ function M.compile(content, config, doc_path, token)
       title = "Markdown"
     end
   end
-  return { html = html, toc = ctx.toc, title = title }
+  return { html = html, title = title }
 end
 
 M.escape = escape

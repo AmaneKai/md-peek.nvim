@@ -1,6 +1,5 @@
 local compiler = require("md-peek.compiler")
-local markdown = require("md-peek.markdown")
-local headings = require("md-peek.overlay.headings")
+local overlay = require("md-peek.overlay")
 
 local M = {}
 
@@ -21,7 +20,7 @@ end
 
 local function heading_slugs(bufnr)
   local used, slugs = {}, {}
-  for _, heading in ipairs(headings.headings(bufnr)) do
+  for _, heading in ipairs(overlay.headings(bufnr)) do
     local base = slug(heading.title)
     if base == "" then
       base = "section"
@@ -42,6 +41,11 @@ local function targets(line)
   for start, target, finish in line:gmatch([[()<img[^>]-src=["']([^"']+)["'][^>]*>()]]) do
     table.insert(found, { target = target, col = start - 1, end_col = finish - 1 })
   end
+  -- Reference definitions: `[label]: target "title"`.
+  local start, target, finish = line:match("^ ? ? ?%[[^%]^][^%]]*%]:%s*()<?([^%s>]+)>?.-()%s*$")
+  if target then
+    table.insert(found, { target = target, col = start - 1, end_col = finish - 1 })
+  end
   return found
 end
 
@@ -56,7 +60,7 @@ function M.compute(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local slugs
   local diagnostics = {}
-  local scan = markdown.scan(lines)
+  local scan = overlay.scan(lines)
 
   for index, line in ipairs(lines) do
     if not scan.skip[index] then
