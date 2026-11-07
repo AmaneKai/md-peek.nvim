@@ -1689,6 +1689,8 @@ vim.env.XDG_STATE_HOME = saved_state_home
 -- A port that is taken is reported, not raised.
 local holder = uv.new_tcp()
 assert(holder:bind("127.0.0.1", 0))
+-- A socket that is only bound does not hold the port on every OS; one that listens always does.
+assert(holder:listen(1, function() end))
 local busy = dofile(root .. "/lua/md-peek/server.lua")
 assert(busy.start({ preview = {}, port = holder:getsockname().port }) == false)
 assert(busy.error and busy.error:match("could not"), tostring(busy.error))
