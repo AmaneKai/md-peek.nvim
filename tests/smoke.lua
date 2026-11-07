@@ -162,7 +162,7 @@ if vim.fn.has("win32") == 0 then
   vim.fn.writefile({ "#!/bin/sh" }, bin .. "/chromium")
   vim.fn.setfperm(bin .. "/chromium", "rwxr-xr-x")
   local original_path = vim.env.PATH
-  vim.env.PATH = bin .. ":" .. original_path
+  vim.env.PATH = bin -- only the fake, so a real Chrome on the machine cannot be found first
   local found = detect.find_kind("chromium", "linux")
   vim.env.PATH = original_path
   assert(found and found.kind == "chromium" and found.binary == "chromium" and found.driver)
@@ -1374,7 +1374,8 @@ end)
 assert(seen[2].type == "toggle_task" and seen[2].line == 3)
 assert(seen[3].type == "rendered" and seen[3].latency_ms == 12)
 assert(
-  seen[4].type == "open_file" and seen[4].path == workdir .. "/notes/Other File.md",
+  seen[4].type == "open_file"
+    and seen[4].path:gsub("\\", "/") == (workdir .. "/notes/Other File.md"):gsub("\\", "/"),
   seen[4].path
 )
 assert(
