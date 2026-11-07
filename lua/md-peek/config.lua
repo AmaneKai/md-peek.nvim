@@ -51,6 +51,9 @@ return {
     remote_images = true, -- false blocks http(s) images via the CSP
     -- Which local files a document may embed: "document" (its own folder and below), "git" (the
     -- whole repository), or an absolute directory. Only media types are ever served.
+    -- A list allows several places at once, e.g. { "git", "~/Pictures", "$XDG_DATA_HOME/img" }:
+    -- the document's folder (or the repo, with "git") plus each directory. `~` and `$VAR` are
+    -- expanded and directories missing on this machine are skipped, so one config fits every machine.
     asset_root = "document",
     max_width = 920,
     font = {},

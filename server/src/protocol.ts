@@ -75,7 +75,7 @@ const previewConfigSchema = z
     sanitize: z.boolean().optional(),
     remote_images: z.boolean().optional(),
     // 'document' (default) | 'git' | an absolute directory
-    asset_root: z.string().optional(),
+    asset_root: z.union([z.string(), z.array(z.string())]).optional(),
     asset_extensions: z.array(z.string()).optional(),
     max_width: z.number().positive().optional(),
     font: previewFontSchema.optional(),

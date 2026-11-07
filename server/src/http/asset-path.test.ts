@@ -158,6 +158,29 @@ describe('asset sandbox', () => {
     })
   })
 
+  describe('with extraRoots', () => {
+    it('serves the document folder plus each extra folder, and nothing else', () => {
+      const { base, docs, document } = fixture()
+      const config = sandbox({ extraRoots: [join(base, 'repo', 'images')] })
+      expect(resolveDocumentAssetPath(document, 'pic.png', config)).toBe(join(docs, 'pic.png'))
+      expect(resolveDocumentAssetPath(document, '../images/logo.png', config)).toBe(
+        join(base, 'repo', 'images', 'logo.png'),
+      )
+      expect(() => resolveDocumentAssetPath(document, '../../outside.png', config)).toThrow(
+        AssetOutsideRootError,
+      )
+    })
+
+    it('ignores extra folders that do not exist on this machine', () => {
+      const { base, docs, document } = fixture()
+      const config = sandbox({ extraRoots: [join(base, 'missing'), base] })
+      expect(resolveDocumentAssetPath(document, '../../outside.png', config)).toBe(
+        join(base, 'outside.png'),
+      )
+      expect(resolveDocumentAssetPath(document, 'pic.png', config)).toBe(join(docs, 'pic.png'))
+    })
+  })
+
   describe('file types', () => {
     it('refuses everything that is not an allowed media type', () => {
       const { document } = fixture()

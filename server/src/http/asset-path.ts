@@ -7,6 +7,11 @@ export interface AssetSandboxConfig {
   allowGitRoot: boolean
   /** An explicit root directory; takes precedence over `allowGitRoot`. */
   customRoot?: string
+  /**
+   * Further directories, besides the root above, that may be served from. Entries that do not
+   * exist on this machine are ignored, so one config can be shared across machines.
+   */
+  extraRoots?: readonly string[]
   /** Lower-case extensions, with the dot, that may be served. Everything else is refused. */
   allowedExtensions: ReadonlySet<string>
 }
@@ -62,11 +67,26 @@ function findGitRoot(documentDirectory: string): string {
   }
 }
 
-function assetRoot(documentDirectory: string, sandbox: AssetSandboxConfig): string {
+function assetRoots(documentDirectory: string, sandbox: AssetSandboxConfig): string[] {
+  const roots: string[] = []
   if (sandbox.customRoot) {
-    return realpathSync(sandbox.customRoot)
+    roots.push(realpathSync(sandbox.customRoot))
+  } else {
+    roots.push(sandbox.allowGitRoot ? findGitRoot(documentDirectory) : documentDirectory)
   }
-  return sandbox.allowGitRoot ? findGitRoot(documentDirectory) : documentDirectory
+  for (const extra of sandbox.extraRoots ?? []) {
+    try {
+      roots.push(realpathSync(extra))
+    } catch {
+      // Missing on this machine: skip it rather than fail the whole preview.
+    }
+  }
+  return roots
+}
+
+function isInside(root: string, path: string): boolean {
+  const pathFromRoot = relative(root, path)
+  return !(pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot))
 }
 
 /**
@@ -79,14 +99,11 @@ export function resolveDocumentAssetPath(
   sandbox: AssetSandboxConfig = defaultAssetSandbox,
 ): string {
   const documentDirectory = realpathSync(dirname(documentPath))
-  const root = assetRoot(documentDirectory, sandbox)
+  const roots = assetRoots(documentDirectory, sandbox)
   const unresolvedAssetPath = resolve(documentDirectory, requestedPath.split(/[?#]/, 1)[0])
   const assetPath = realpathSync(unresolvedAssetPath)
-  const pathFromRoot = relative(root, assetPath)
-  const escapesRoot =
-    pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)
 
-  if (escapesRoot) {
+  if (!roots.some((root) => isInside(root, assetPath))) {
     throw new AssetOutsideRootError()
   }
 

@@ -6,7 +6,7 @@ var __export = (target, all) => {
 
 // src/core/daemon.ts
 import http from "node:http";
-import { dirname as dirname3 } from "node:path";
+import { dirname as dirname3, isAbsolute as isAbsolute2 } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -63,20 +63,31 @@ function findGitRoot(documentDirectory) {
     current = parent;
   }
 }
-function assetRoot(documentDirectory, sandbox) {
+function assetRoots(documentDirectory, sandbox) {
+  const roots = [];
   if (sandbox.customRoot) {
-    return realpathSync(sandbox.customRoot);
+    roots.push(realpathSync(sandbox.customRoot));
+  } else {
+    roots.push(sandbox.allowGitRoot ? findGitRoot(documentDirectory) : documentDirectory);
   }
-  return sandbox.allowGitRoot ? findGitRoot(documentDirectory) : documentDirectory;
+  for (const extra of sandbox.extraRoots ?? []) {
+    try {
+      roots.push(realpathSync(extra));
+    } catch {
+    }
+  }
+  return roots;
+}
+function isInside(root, path) {
+  const pathFromRoot = relative(root, path);
+  return !(pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot));
 }
 function resolveDocumentAssetPath(documentPath, requestedPath, sandbox = defaultAssetSandbox) {
   const documentDirectory = realpathSync(dirname(documentPath));
-  const root = assetRoot(documentDirectory, sandbox);
+  const roots = assetRoots(documentDirectory, sandbox);
   const unresolvedAssetPath = resolve(documentDirectory, requestedPath.split(/[?#]/, 1)[0]);
   const assetPath = realpathSync(unresolvedAssetPath);
-  const pathFromRoot = relative(root, assetPath);
-  const escapesRoot = pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot);
-  if (escapesRoot) {
+  if (!roots.some((root) => isInside(root, assetPath))) {
     throw new AssetOutsideRootError();
   }
   const extension = extname(assetPath).toLowerCase();
@@ -14864,7 +14875,7 @@ var previewConfigSchema = external_exports.object({
   sanitize: external_exports.boolean().optional(),
   remote_images: external_exports.boolean().optional(),
   // 'document' (default) | 'git' | an absolute directory
-  asset_root: external_exports.string().optional(),
+  asset_root: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional(),
   asset_extensions: external_exports.array(external_exports.string()).optional(),
   max_width: external_exports.number().positive().optional(),
   font: previewFontSchema.optional(),
@@ -14983,14 +14994,29 @@ function loadPreviewConfig() {
     return {};
   }
 }
+function expandPath(path) {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const withHome = path === "~" || /^~[\\/]/.test(path) ? home + path.slice(1) : path;
+  return withHome.replace(
+    /\$(?:\{(\w+)\}|(\w+))/g,
+    (_match, braced, bare) => process.env[braced ?? bare ?? ""] ?? ""
+  );
+}
 function assetSandbox(config2) {
   const root = config2.asset_root;
   const extensions = config2.asset_extensions;
-  return {
-    allowGitRoot: root === "git",
-    customRoot: typeof root === "string" && root !== "git" && root !== "document" ? root : void 0,
-    allowedExtensions: Array.isArray(extensions) ? new Set(extensions.map((extension) => String(extension).toLowerCase())) : defaultAssetExtensions
-  };
+  const allowedExtensions = Array.isArray(extensions) ? new Set(extensions.map((extension) => String(extension).toLowerCase())) : defaultAssetExtensions;
+  const isKeyword = (value) => value === "git" || value === "document";
+  if (Array.isArray(root)) {
+    const entries = root.map(String);
+    return {
+      allowGitRoot: entries.includes("git"),
+      extraRoots: entries.filter((entry) => entry && !isKeyword(entry)).map(expandPath).filter((entry) => isAbsolute2(entry)),
+      allowedExtensions
+    };
+  }
+  const expanded = typeof root === "string" && !isKeyword(root) ? expandPath(root) : void 0;
+  return { allowGitRoot: root === "git", customRoot: expanded || void 0, allowedExtensions };
 }
 function errorMessage2(error51) {
   return error51 instanceof Error ? error51.message : String(error51);
@@ -15088,5 +15114,6 @@ if (isMainModule(import.meta)) {
   });
 }
 export {
-  createServer
+  createServer,
+  expandPath
 };

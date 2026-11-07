@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
@@ -36,17 +36,39 @@ function loadPreviewConfig(): Record<string, unknown> {
   }
 }
 
+/** Expands a leading `~` and `$VAR` / `${VAR}` so one config works on every machine. */
+export function expandPath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  const withHome = path === '~' || /^~[\\/]/.test(path) ? home + path.slice(1) : path
+  return withHome.replace(
+    /\$(?:\{(\w+)\}|(\w+))/g,
+    (_match, braced?: string, bare?: string) => process.env[braced ?? bare ?? ''] ?? '',
+  )
+}
+
 function assetSandbox(config: Record<string, unknown>): AssetSandboxConfig {
   const root = config.asset_root
   const extensions = config.asset_extensions
-  return {
-    allowGitRoot: root === 'git',
-    customRoot:
-      typeof root === 'string' && root !== 'git' && root !== 'document' ? root : undefined,
-    allowedExtensions: Array.isArray(extensions)
-      ? new Set(extensions.map((extension) => String(extension).toLowerCase()))
-      : defaultAssetExtensions,
+  const allowedExtensions = Array.isArray(extensions)
+    ? new Set(extensions.map((extension) => String(extension).toLowerCase()))
+    : defaultAssetExtensions
+  const isKeyword = (value: string) => value === 'git' || value === 'document'
+
+  // A list means "the document's folder (or the repo, if 'git' is listed) plus these folders".
+  if (Array.isArray(root)) {
+    const entries = root.map(String)
+    return {
+      allowGitRoot: entries.includes('git'),
+      extraRoots: entries
+        .filter((entry) => entry && !isKeyword(entry))
+        .map(expandPath)
+        .filter((entry) => isAbsolute(entry)),
+      allowedExtensions,
+    }
   }
+
+  const expanded = typeof root === 'string' && !isKeyword(root) ? expandPath(root) : undefined
+  return { allowGitRoot: root === 'git', customRoot: expanded || undefined, allowedExtensions }
 }
 
 function errorMessage(error: unknown): string {
