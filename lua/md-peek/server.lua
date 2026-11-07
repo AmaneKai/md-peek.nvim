@@ -103,10 +103,19 @@ local function parse_query(query)
   return params
 end
 
+--- The parent directory of `path`. A filesystem root ("/", "C:/") is its own parent, which is what
+--- ends a walk up the tree; a bare relative name gives ".".
 local function dirname(path)
+  if path == "/" or path:match("^%a:[/\\]?$") then
+    return path
+  end
   local directory = path:gsub("[/\\][^/\\]*$", "")
-  if directory == "" or directory == path then
-    return path:sub(1, 1) == "/" and "/" or "."
+  if directory == path then
+    return "."
+  elseif directory == "" then
+    return "/"
+  elseif directory:match("^%a:$") then
+    return directory .. "/"
   end
   return directory
 end
@@ -289,7 +298,7 @@ local function git_root(directory)
       return uv.fs_realpath(walk)
     end
     local parent = dirname(walk)
-    if parent == walk then
+    if parent == walk or parent == "." then
       return uv.fs_realpath(directory)
     end
     walk = parent

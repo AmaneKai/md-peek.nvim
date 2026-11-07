@@ -285,7 +285,9 @@ end
 
 local function copy_to_clipboard(text)
   -- Without a clipboard provider (typical over SSH) "+" fails; fall back to the unnamed register.
-  if not pcall(vim.fn.setreg, "+", text) then
+  -- With no provider setreg("+") only warns instead of raising, so check that the text landed.
+  local copied = pcall(vim.fn.setreg, "+", text) and vim.fn.getreg("+") == text
+  if not copied then
     pcall(vim.fn.setreg, '"', text)
   end
 end
